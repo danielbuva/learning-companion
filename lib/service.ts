@@ -4,6 +4,8 @@ import { mcpResult } from "./mcp.ts";
 import { demoCommands, activityTemplate, activityTypes } from "./synthetic.ts";
 import { widgetDocument } from "./widget-document";
 import {base64} from "./exports";
+import {authorizeFromHost} from "./consent";
+import {uploadFromTool} from "./files";
 
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
 export async function learningFetch(request:Request, env:Cloudflare.Env,ctx:ExecutionContext):Promise<Response|null>{
@@ -25,7 +27,9 @@ export async function learningFetch(request:Request, env:Cloudflare.Env,ctx:Exec
     const text=await request.text();if(text.length>500_000)throw new Fault("too_large","Split large inputs into sections.",413);
     const body=JSON.parse(text);
     rpcId=body.id??null;
+    if(path==="/mcp"&&body.method==="tools/call"&&body.params?.name==="learning_authorize")return json({jsonrpc:"2.0",id:rpcId,result:await authorizeFromHost(repo,owner,body.params)});
     const run=async(command:any)=>{
+      if(command.action==="upload_source")return uploadFromTool(repo,env.BUCKET,owner,command.data??{},command.key);
       if(command.action==="source_file"){
         const r=await transact(repo,owner,{action:"get",kind:"source",id:command.id},path==="/mcp"?"tutor":"learner");
         if(!r.record.data.fileId||!env.BUCKET)throw new Fault("file_unavailable","No original file is available for this source.",404);

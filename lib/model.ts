@@ -7,6 +7,7 @@ export type State = {
   receipts: Record<string, { digest: string; result: Json }>;
   tombstones: string[]; exposures: Record<string, number>;
   access: { read: boolean; write: boolean; background: boolean; recording: boolean; excluded: string[] };
+  consentChallenges?:Record<string,{expires:number;resolved?:Json;accessFingerprint:string}>;
 };
 export type Command = { action: string; kind?: Kind; id?: string; version?: number; key?: string; data?: Json; [key: string]: any };
 export class Fault extends Error {

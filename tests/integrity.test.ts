@@ -6,7 +6,7 @@ import {execute} from "../lib/engine.ts";
 import {transact} from "../lib/store.ts";
 import {wordDocument} from "../lib/exports.ts";
 import {demoCommands} from "../lib/synthetic.ts";
-function seeded(){const s=emptyState();for(const c of demoCommands())execute(s,c,"learner");s.access.write=true;return s;}
+function seeded(){const s=emptyState();for(const c of demoCommands())execute(s,c,"learner");s.access.write=true;s.records.course["demo-algorithms"].data.synthetic=false;s.records.activity["demo-graph"].data.synthetic=false;return s;}
 class Repo{state:State;constructor(s:State){this.state=s;}async load(){return {revision:1,state:structuredClone(this.state)};}async save(_o:string,_r:number,s:State){this.state=s;return true;}}
 let counter=0;const c=(s:State,command:Command,actor="learner")=>execute(s,{key:`integrity-${++counter}`,...command},actor);
 test("excluded source cannot leak through resume, snapshot, history, or cached receipts",async()=>{const repo=new Repo(seeded());repo.state.access.excluded=["demo-algorithms-source"];for(const command of [{action:"snapshot"},{action:"resume"}]){const r=await transact(repo,"one",command,"tutor");assert.ok(!JSON.stringify(r).includes("A tentative distance is the best cost found so far"));}await assert.rejects(()=>transact(repo,"one",{action:"get",kind:"source",id:"demo-algorithms-source"},"tutor"),/unavailable|excluded/);});

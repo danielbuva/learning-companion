@@ -9,7 +9,7 @@ import {mcpResult,tools,discovery} from "../lib/mcp.ts";
 
 let seq=0;
 const cmd=(s:State,c:Command,actor="learner",now?:string)=>execute(s,{...c,key:c.key??`test-${++seq}`},actor,now);
-function setup(){const s=emptyState();for(const c of demoCommands())execute(s,c,"learner","2026-01-01T10:00:00Z");s.access.write=true;s.access.background=true;return s;}
+function setup(){const s=emptyState();for(const c of demoCommands())execute(s,c,"learner","2026-01-01T10:00:00Z");s.access.write=true;s.access.background=true;s.records.course["demo-algorithms"].data.synthetic=false;s.records.activity["demo-graph"].data.synthetic=false;return s;}
 function attempt(s:State,opts:Json={}){
   const a=s.records.activity[opts.activityId??"demo-graph"];
   const r=cmd(s,{action:"submit",id:a.id,version:a.version,data:{selection:"C",reasoning:"least tentative distance with nonnegative edges",...opts.response},...opts.command},opts.actor??"learner",opts.now);

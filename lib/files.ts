@@ -1,6 +1,32 @@
 import { D1Repository,transact } from "./store.ts";
 import { Fault } from "./model.ts";
+import type {Json} from "./model.ts";
+import type {Repository} from "./store.ts";
 const mimeTypes=["image/png","image/jpeg","image/webp","application/pdf","audio/mpeg","audio/wav","audio/webm","audio/mp4"];
+async function boundedBytes(response:Response,max=8_000_000){
+  if(!response.body)throw new Fault("empty_file","The source contains no bytes.");const reader=response.body.getReader(),parts:Uint8Array[]=[];let total=0;
+  try{while(true){const r=await reader.read();if(r.done)break;total+=r.value.length;if(total>max)throw new Fault("too_large","File exceeds the 8 MB limit.",413);parts.push(r.value);}}catch(e){await reader.cancel();throw e;}
+  const result=new Uint8Array(total);let offset=0;for(const part of parts){result.set(part,offset);offset+=part.length;}return result;
+}
+export async function uploadFromTool(repo:Repository,bucket:R2Bucket|undefined,owner:string,data:Json,key:string){
+  const current=await repo.load(owner);if(!current.state.access.read||!current.state.access.write||!current.state.access.recording)throw new Fault("write_denied","Source upload requires learner-authorized tutor writing and recording.",403);
+  if(!bucket)throw new Fault("storage_unavailable","Original-file storage is unavailable.",503);
+  if(!key||!data.name||!mimeTypes.includes(data.mimeType))throw new Fault("invalid_upload","Supply a retry key, original filename, and a supported MIME type.");
+  let bytes:Uint8Array;
+  if(data.base64){if(data.base64.length>350_000)throw new Fault("too_large","Use an authorized host file URL for larger files.",413);try{bytes=Uint8Array.from(atob(data.base64),(c:string)=>c.charCodeAt(0));}catch{throw new Fault("invalid_base64","Source bytes are not valid base64.");}}
+  else if(data.downloadUrl){
+    const url=new URL(data.downloadUrl);
+    if(url.protocol!=="https:"||url.username||url.password||!(["files.openai.com","files.oaiusercontent.com"].includes(url.hostname)||url.hostname.endsWith(".oaiusercontent.com")))throw new Fault("untrusted_file_origin","Only an authorized native ChatGPT file URL is accepted. Do not infer access from a filename.",403);
+    const response=await fetch(url,{redirect:"error"});if(!response.ok)throw new Fault("source_unavailable","The authorized file URL could not be read. Its content was not inspected or saved.",response.status===403?403:400);bytes=await boundedBytes(response);
+  }else throw new Fault("source_bytes_required","Supply original bytes or a currently authorized host file URL.");
+  const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new Uint8Array(bytes).buffer))).map(b=>b.toString(16).padStart(2,"0")).join("");
+  const handle=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(key)))).map(b=>b.toString(16).padStart(2,"0")).join("");
+  const sourceId=`file-${handle}`,previous=current.state.records.source[sourceId];
+  if(previous){if(previous.data.sha256!==digest)throw new Fault("key_reused","This upload retry key belongs to different original bytes.",409);return {record:previous,saved:true,replayed:true};}
+  const fileId=crypto.randomUUID();await bucket.put(`${owner}/${fileId}`,bytes,{httpMetadata:{contentType:data.mimeType}});
+  try{return await transact(repo,owner,{action:"put",kind:"source",id:sourceId,key,data:{title:data.name,fileId,mimeType:data.mimeType,size:bytes.length,sha256:digest,courseId:data.courseId,editable:false,origin:"authorized original source supplied through chat",versionLabel:"1",limitations:["Stored original. Interpretation, transcription, and grading require actual inspection."]}},"tutor");}
+  catch(e){await bucket.delete(`${owner}/${fileId}`);throw e;}
+}
 export async function fileFetch(request:Request,env:Cloudflare.Env):Promise<Response|null>{
   const u=new URL(request.url);if(!u.pathname.startsWith("/api/files"))return null;
   const owner=request.headers.get("oai-authenticated-user-id");if(!owner)return Response.json({error:"Sign in required"},{status:401});
