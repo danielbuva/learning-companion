@@ -30,7 +30,8 @@ test("stale deletion cannot erase a newer edit",async()=>{
 });
 test("deletion scrubs approved snapshots and keeps failed original erasure retryable",async()=>{
   const repo=new Repo();seed(repo);repo.state.records.source["demo-algorithms-source"].data.fileId="synthetic-file";
-  const share=run(repo.state,{action:"request_share",kind:"source",id:"demo-algorithms-source"}).record;
+  assert.throws(()=>run(repo.state,{action:"request_share",kind:"source",id:"demo-algorithms-source"}),/destination/);
+  const share=run(repo.state,{action:"request_share",kind:"source",id:"demo-algorithms-source",data:{destination:"Synthetic test recipient",purpose:"Verify scoped erasure"}}).record;
   run(repo.state,{action:"confirm",id:share.id,version:1,approved:true});
   const request=run(repo.state,{action:"request_delete",kind:"course",id:"demo-algorithms"}).record;
   run(repo.state,{action:"confirm",id:request.id,version:1,approved:true});
@@ -92,7 +93,7 @@ test("a learner-profile schema stays a template instead of becoming an actual pe
 });
 test("an empty numeric response is not a correct zero or evidence of inability",()=>{
   const repo=new Repo();run(repo.state,{action:"put",kind:"skill",id:"zero-skill",data:{title:"Zero is a number"}});run(repo.state,{action:"put",kind:"activity",id:"zero",data:{type:"card",validator:{type:"number",expected:0},skillIds:["zero-skill"]}});
-  const result=run(repo.state,{action:"submit",id:"zero",version:1,data:{answer:"  "}});assert.equal(result.attempt.data.assessment.outcome,"no_attempt");assert.equal(evidence(repo.state,"zero-skill").status,"unassessed");
+  const result=run(repo.state,{action:"submit",id:"zero",version:1,data:{answer:"  ",confidence:"unknown"}});assert.equal(result.attempt.data.assessment.outcome,"no_attempt");assert.equal(result.attempt.data.confidenceSource,"unavailable");assert.equal(evidence(repo.state,"zero-skill").status,"unassessed");
 });
 test("invalid items leave explicit coverage gaps and tutor responses cannot satisfy independence",()=>{
   const repo=new Repo();run(repo.state,{action:"put",kind:"question",id:"q",data:{prompt:"Return zero",points:1}});run(repo.state,{action:"put",kind:"assessment",id:"bar",data:{questionIds:["q"],rules:{threshold:1,independent:true}}});run(repo.state,{action:"put",kind:"activity",id:"a",data:{type:"card",questionId:"q",assessmentId:"bar",validator:{type:"number",expected:0}}});repo.state.access.write=true;
@@ -116,4 +117,21 @@ test("partial workspace changes preserve other graph state and score-only correc
 test("reserved object keys cannot become record identities or exposure fingerprints",()=>{
   const repo=new Repo();for(const id of ["__proto__","constructor","prototype"])assert.throws(()=>run(repo.state,{action:"put",kind:"course",id,data:{title:"Synthetic invalid identity"}}),/non-reserved/);
   assert.equal(Object.keys(repo.state.records.course).length,0);assert.throws(()=>run(repo.state,{action:"put",kind:"activity",id:"safe",data:{type:"card",fingerprint:"__proto__"}}),/fingerprint/);
+});
+test("original-file references are immutable and deleting one duplicate preserves a still-referenced original",()=>{
+  const repo=new Repo();run(repo.state,{action:"put",kind:"source",id:"original",data:{title:"Synthetic original",fileId:"private-file",mimeType:"application/pdf"}});run(repo.state,{action:"duplicate",kind:"source",id:"original",newId:"copy"});assert.throws(()=>run(repo.state,{action:"patch",kind:"source",id:"original",version:1,data:{fileId:"another-file"}}),/immutable/);
+  const request=run(repo.state,{action:"request_delete",kind:"source",id:"original"}).record;const result=run(repo.state,{action:"confirm",id:request.id,version:1,approved:true});assert.equal(result.retainedSharedOriginals,1);assert.deepEqual(repo.state.pendingFileDeletes,[]);assert.equal(repo.state.records.source.copy.data.fileId,"private-file");repo.state.access.background=true;assert.throws(()=>run(repo.state,{action:"request_job",id:"uninspected",data:{type:"practice_pack",purpose:"Cannot invent PDF text",sourceIds:["copy"]}}),/inspected study text/);
+});
+test("excluded-source duplicates cannot leak through reads or be used by new background jobs",async()=>{
+  const repo=new Repo();seed(repo);repo.state.access.background=true;run(repo.state,{action:"duplicate",kind:"source",id:"demo-algorithms-source",newId:"source-copy"});repo.state.access.excluded=["demo-algorithms-source"];
+  await assert.rejects(()=>transact(repo,"owner",{action:"get",kind:"source",id:"source-copy"},"tutor"),/unavailable|excluded/);await assert.rejects(()=>transact(repo,"owner",{action:"request_job",id:"blocked-job",key:"blocked-job",data:{type:"memory_sheet",purpose:"Blocked duplicate",sourceIds:["source-copy"]}},"tutor"),/excluded/);
+  repo.state.access.excluded=[];run(repo.state,{action:"request_job",id:"queued-copy",data:{type:"memory_sheet",purpose:"Originally permitted copy",sourceIds:["source-copy"]}});repo.state.access.excluded=["demo-algorithms-source"];await runJobs(repo,"owner");assert.equal(repo.state.records.job["queued-copy"].data.status,"canceled");assert.equal(repo.state.records.artifact["queued-copy-output"],undefined);
+  repo.state.records.source["demo-algorithms-source"].data.fileId="same-original";run(repo.state,{action:"put",kind:"source",id:"direct-copy",data:{fileId:"same-original",title:"Synthetic direct reference"}});repo.state.records.source=Object.fromEntries(Object.entries(repo.state.records.source).reverse());
+  await assert.rejects(()=>transact(repo,"owner",{action:"get",kind:"source",id:"direct-copy"},"tutor"),/unavailable|excluded/);await assert.rejects(()=>transact(repo,"owner",{action:"put",kind:"source",id:"another-copy",key:"another-copy",data:{fileId:"same-original",title:"Cannot bypass scope"}},"tutor"),/scope|excluded/);
+});
+test("the learner view withholds item grades and totals until the agreed full-assessment boundary",()=>{
+  const repo=new Repo();run(repo.state,{action:"put",kind:"skill",id:"boundary-skill",data:{title:"Synthetic boundary skill"}});run(repo.state,{action:"fresh_assessment",id:"boundary",data:{scope:["boundary-skill"],questionCount:2,rules:{threshold:1,feedbackBoundary:"after_all"},questions:[{prompt:"Synthetic boundary item one",skillIds:["boundary-skill"],criteria:"Return the requested value"},{prompt:"Synthetic boundary item two",skillIds:["boundary-skill"],criteria:"Return the requested value"}]}});
+  const first=run(repo.state,{action:"submit",id:"boundary-item0",version:1,data:{answer:"2"}}).attempt;run(repo.state,{action:"grade",id:first.id,version:1,data:{reason:"SECRET_ITEM_FEEDBACK",assessment:{outcome:"correct",score:1,reasoning:"sound"}}});
+  const pending=run(repo.state,{action:"snapshot"});assert.equal(pending.records.assessment[0].data.result.withheld,true);assert.equal(pending.records.assessment[0].data.result.total,undefined);assert.equal(pending.records.attempt[0].data.assessment,null);assert.ok(!JSON.stringify(pending).includes("SECRET_ITEM_FEEDBACK"));assert.equal(pending.records.skill[0].data.evidence.independentSuccesses,0);assert.equal(pending.records.skill[0].data.evidence.pendingAssessmentFeedback,1);
+  run(repo.state,{action:"submit",id:"boundary-item1",version:1,data:{answer:"3"}});const done=run(repo.state,{action:"snapshot"});assert.equal(done.records.assessment[0].data.result.withheld,false);assert.equal(done.records.attempt[0].data.assessment.score,1);assert.equal(done.records.skill[0].data.evidence.independentSuccesses,1);
 });

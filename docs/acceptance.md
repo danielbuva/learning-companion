@@ -12,7 +12,7 @@ Run `npm test`; browser and connected-tool results are summarized in [verificati
 | B04 | A correct answer follows a displayed solution. | Contract passed; live exposed-response check pending. |
 | B05 | Named and renamed algorithms produce different answers. | Named/unlabelled evidence contract passed; live teaching comparison remains open. |
 | B06 | A learner uses correct rough notation or fills only requested blanks. | Numeric normalization contract passed; semantic tutoring quality requires actual response review. |
-| B07 | A question leaks its answer or is defective. | Real chat invalidation exercised; denominator/coverage repair verified in domain tests, production readback pending. |
+| B07 | A question leaks its answer or is defective. | Real chat invalidation and production readback excluded the defective item, repaired the denominator, and requested replacement coverage without learner-failure inference. |
 | B08 | An answer key conflicts with a valid correction. | Exact version comparison and conflict-preservation contracts passed; live revised-source check pending. |
 | B09 | A bar has repeated errors in one subskill. | Real chat synthetic bar triggered its declared repeated-error rule. |
 | B10 | A fresh full retest is requested. | Real chat created a distinct full two-item retest with declared scope. |
@@ -37,16 +37,16 @@ Run `npm test`; browser and connected-tool results are summarized in [verificati
 | E06 | A temporary overload observation is recorded. | Contextual uncertain load retained in conversation layer; never promoted automatically to profile. |
 | E07 | A course-specific policy conflicts with another imported rule. | Private scope decision saved; conflict trace and activation are inspectable. |
 | E08 | The learner opens the active graph in a panel and then fullscreen. | Fresh standard-chat inline → fullscreen → inline passed with the exact graph, step, selection and draft; global entry remains fullscreen. |
-| E09 | The learner selects a vertex and submits a next-step answer. | Actual native C submission settled C, relaxed B/D, saved one attempt and produced tutor feedback. |
+| E09 | The learner selects a vertex and submits a next-step answer. | Actual native C submission settled C, relaxed B/D, saved one attempt and produced tutor feedback; graph answer help now follows the current step. |
 | E10 | The tutor demonstrates the next graph step. | Demonstration/no-evidence contract passed; live tutor demonstration pending. |
-| E11 | The learner says “why this cell?” after a table selection. | Selected-cell axes/version contract passed; native selected-cell feedback pending. |
-| E12 | A correct next answer could be revealed by color, a title, or preselection. | Snapshot, checkpoint and accessibility projections conceal answer keys and expected outputs; native cold-assessment inspection pending. |
+| E11 | The learner says “why this cell?” after a table selection. | Native selection of F(1,2), entered value and partial reasoning reached the tutor; feedback used the actual row/column meanings and dependencies. |
+| E12 | A correct next answer could be revealed by color, a title, or preselection. | Snapshot, checkpoint and accessibility projections conceal answer keys and expected outputs. Feedback-boundary tests also conceal item grades, totals and skill conclusions; native cold-assessment inspection pending. |
 | E13 | A learner explores with sliders without submitting an answer. | Exploration/no-evidence contract passed; native slider journey pending. |
 | E14 | A learner asks to replay an earlier step after seeing a solution. | Reset/replay exposure tests passed; live replay pending. |
 | E15 | A learner writes a partial solution in a fullscreen workspace. | Actual native partial graph reasoning reached the tutor without retyping and retained its draft. |
 | E16 | The learner requests actual code testing. | Actual isolated JavaScript output 8 verified locally and in native web/Work; output reveal is tracked separately. |
-| E17 | A source passage is attached through a composer feature. | Native vertex selection created a removable composer context attachment; precise PDF/source selection pending in native host. |
-| E18 | A specialized viewer edits learner-owned notes. | Local PDF extraction kept originals byte-identical; app-owned notes are editable. Native external-file entry remains unverified. |
+| E17 | A source passage is attached through a composer feature. | Native vertex and exact PDF page-2 passage contexts were attached to and removed from the composer. |
+| E18 | A specialized viewer edits learner-owned notes. | Native and local PDF extraction kept originals byte-identical; app-owned notes are editable. Native external-file entry remains unverified. |
 | E19 | A supported sidebar entry opens a saved exercise. | Actual Open plugin global entry resumed the existing production graph beside its chat. |
 | E20 | A client lacks a requested panel or composer feature. | Text/tool equivalents work; global display-mode refusal is reported truthfully. Mobile/native file clients untested. |
 | E21 | The client supports a required richer surface. | Actual native global app, adjacent tutoring chat, inline app and fullscreen transition verified. Native external-file entry remains open. |
