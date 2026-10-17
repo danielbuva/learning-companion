@@ -9,11 +9,11 @@ Run `npm test`; browser and connected-tool results are summarized in [verificati
 | B01 | A course is introduced in chat with a study guide. | Real chat created a synthetic course, guide and extracted outline; preference saved through tools. |
 | B02 | A goal changes or a category is skipped. | Real chat changed the synthetic plan and retained skipped work as unassessed. |
 | B03 | A new chat resumes a paused graph exercise. | Native paused graph recovered through another connected chat, including B selection, step 2, draft and active policy. |
-| B04 | A correct answer follows a displayed solution. | Contract passed; live exposed-response check pending. |
+| B04 | A correct answer follows a displayed solution. | Real chat submitted a synthetic correct response after H6 solution exposure; assistance and exposure were retained and no personal independent evidence was created. |
 | B05 | Named and renamed algorithms produce different answers. | Named/unlabelled evidence contract passed; live teaching comparison remains open. |
 | B06 | A learner uses correct rough notation or fills only requested blanks. | Numeric normalization contract passed; semantic tutoring quality requires actual response review. |
 | B07 | A question leaks its answer or is defective. | Real chat invalidation and production readback excluded the defective item, repaired the denominator, and requested replacement coverage without learner-failure inference. |
-| B08 | An answer key conflicts with a valid correction. | Exact version comparison and conflict-preservation contracts passed; live revised-source check pending. |
+| B08 | An answer key conflicts with a valid correction. | Real chat corrected a synthetic defective key and compared exact versions 1/2; both original claim and correction remained retrievable. |
 | B09 | A bar has repeated errors in one subskill. | Real chat synthetic bar triggered its declared repeated-error rule. |
 | B10 | A fresh full retest is requested. | Real chat created a distinct full two-item retest with declared scope. |
 | B11 | A milestone is passed with cumulative review agreed. | Real chat corrected a full synthetic retest to 2/2, obtained fresh_cumulative, and created the agreed fresh cumulative item. |
@@ -31,20 +31,20 @@ Run `npm test`; browser and connected-tool results are summarized in [verificati
 | B23 | A public demo or repository is published. | Staged secret/provenance review and public-source audit; private runtime and complete attachments excluded. |
 | E01 | A tutoring package includes engine rules, examples, and a personal profile. | Actual private package import separated engine, personal profile and state schemas; profile-template classification repair added. |
 | E02 | A new chat starts after authorized tutoring-policy import. | A separate connected chat retrieved the active imported policy with exact paused state. |
-| E03 | The learner requests a direct answer under a coaching policy. | Direct-answer/exposure contract passed; live direct-answer journey pending. |
-| E04 | The learner succeeds only after a revealed intermediate step. | Assistance contract passed; live assisted-step journey pending. |
+| E03 | The learner requests a direct answer under a coaching policy. | Real chat revealed the current graph solution directly, recorded H6 exposure and imposed no quiz. Broader dialogue-quality evaluation remains open. |
+| E04 | The learner succeeds only after a revealed intermediate step. | Real chat revealed an intermediate path-cost step, then saved a correct synthetic B response with H2 and exposure retained. |
 | E05 | The same hint fails again. | Controller/policy contract passed; adaptive teaching quality remains open for real dialogue evaluation. |
 | E06 | A temporary overload observation is recorded. | Contextual uncertain load retained in conversation layer; never promoted automatically to profile. |
 | E07 | A course-specific policy conflicts with another imported rule. | Private scope decision saved; conflict trace and activation are inspectable. |
 | E08 | The learner opens the active graph in a panel and then fullscreen. | Fresh standard-chat inline → fullscreen → inline passed with the exact graph, step, selection and draft; global entry remains fullscreen. |
 | E09 | The learner selects a vertex and submits a next-step answer. | Actual native C submission settled C, relaxed B/D, saved one attempt and produced tutor feedback; graph answer help now follows the current step. |
-| E10 | The tutor demonstrates the next graph step. | Demonstration/no-evidence contract passed; live tutor demonstration pending. |
+| E10 | The tutor demonstrates the next graph step. | Real chat demonstrated settling D and relaxing E in the same synthetic graph; attempt count stayed unchanged and earlier H6 exposure remained. |
 | E11 | The learner says “why this cell?” after a table selection. | Native selection of F(1,2), entered value and partial reasoning reached the tutor; feedback used the actual row/column meanings and dependencies. |
-| E12 | A correct next answer could be revealed by color, a title, or preselection. | Snapshot, checkpoint and accessibility projections conceal answer keys and expected outputs. Feedback-boundary tests also conceal item grades, totals and skill conclusions; native cold-assessment inspection pending. |
-| E13 | A learner explores with sliders without submitting an answer. | Exploration/no-evidence contract passed; native slider journey pending. |
-| E14 | A learner asks to replay an earlier step after seeing a solution. | Reset/replay exposure tests passed; live replay pending. |
+| E12 | A correct next answer could be revealed by color, a title, or preselection. | Native cold graph showed no key, hint or preselected vertex. First submission left the graph unchanged; app and actual tutor withheld feedback until the declared full-assessment boundary. |
+| E13 | A learner explores with sliders without submitting an answer. | Native concept slider changed a from 1 to 3, updated the plotted representation and saved its state; authoritative read found zero attempts for that activity. |
+| E14 | A learner asks to replay an earlier step after seeing a solution. | Real chat replay restored an earlier graph state after a full solution; H6 and both reveals remained recorded. |
 | E15 | A learner writes a partial solution in a fullscreen workspace. | Actual native partial graph reasoning reached the tutor without retyping and retained its draft. |
-| E16 | The learner requests actual code testing. | Actual isolated JavaScript output 8 verified locally and in native web/Work; output reveal is tracked separately. |
+| E16 | The learner requests actual code testing. | Native isolated JavaScript returned 8, terminated an infinite loop after its one-second budget, then returned 8 after restoration. Results carry the executed-code fingerprint; prediction exposure stays separate. |
 | E17 | A source passage is attached through a composer feature. | Native vertex and exact PDF page-2 passage contexts were attached to and removed from the composer. |
 | E18 | A specialized viewer edits learner-owned notes. | Native and local PDF extraction kept originals byte-identical; app-owned notes are editable. Native external-file entry remains unverified. |
 | E19 | A supported sidebar entry opens a saved exercise. | Actual Open plugin global entry resumed the existing production graph beside its chat. |

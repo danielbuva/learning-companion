@@ -103,7 +103,7 @@ test("invalid items leave explicit coverage gaps and tutor responses cannot sati
   assert.throws(()=>run(repo.state,{action:"grade",id:submitted.attempt.id,version:2,data:{reason:"Invalid points",assessment:{outcome:"correct",score:999}}}),/available points/);
 });
 test("a revealed graph answer follows the current step rather than the original solution",()=>{
-  const repo=new Repo();seed(repo);run(repo.state,{action:"submit",id:"demo-graph",version:1,data:{selection:"C"}});const result=run(repo.state,{action:"reveal",id:"demo-graph",version:2,level:6});assert.match(result.revealed,/settle B with tentative distance 3/);assert.equal(result.record.data.state.step,2);
+  const repo=new Repo();seed(repo);run(repo.state,{action:"submit",id:"demo-graph",version:1,data:{selection:"C"}});const result=run(repo.state,{action:"reveal",id:"demo-graph",version:2,level:6});assert.match(result.revealed,/settle B with tentative distance 3/);assert.equal(result.record.data.state.step,2);const shown=run(repo.state,{action:"demonstrate",id:"demo-graph",version:3,data:{state:{step:2}}});assert.equal(shown.record.data.support,6);
 });
 test("a missing hint does not invent assistance and an actual entry cue prevents a clean-evidence claim",()=>{
   const repo=new Repo();run(repo.state,{action:"put",kind:"activity",id:"cue",data:{type:"card",validator:{type:"number",expected:2}}});
