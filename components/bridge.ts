@@ -27,5 +27,6 @@ export class HostBridge {
   }
   async contextSelection(selection:Json|null){return this.request("ui/update-model-context",selection?{content:[{type:"text",text:JSON.stringify(selection),_meta:{"openai/title":"Selected learning context"}}],structuredContent:selection}:{content:[],structuredContent:{}});}
   async message(text:string,send=true){return this.request("ui/message",{role:"user",content:[{type:"text",text}],_meta:{"openai/message":{target:"active",send}}});}
+  async sourceFile(sourceId:string){return this.request("tools/call",{name:"learning_source_file",arguments:{sourceId}});}
   destroy(){window.removeEventListener("message",this.receive);}
 }

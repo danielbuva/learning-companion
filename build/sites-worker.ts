@@ -2,9 +2,12 @@ import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
 import type { ConnectorBinding } from "../lib/connector-contract.mjs";
 import { learningFetch } from "../lib/service";
+import { fileFetch } from "../lib/files";
 
 export default {
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext<{ CONNECTORS?: ConnectorBinding }>) {
+    const fileResponse = await fileFetch(request, env);
+    if (fileResponse) return fileResponse;
     const learningResponse = await learningFetch(request, env, ctx);
     if (learningResponse) return learningResponse;
     let binding = ctx.props?.CONNECTORS;

@@ -3,6 +3,7 @@ import { Fault } from "./model.ts";
 import { mcpResult } from "./mcp.ts";
 import { demoCommands, activityTemplate, activityTypes } from "./synthetic.ts";
 import { widgetDocument } from "./widget-document";
+import {base64} from "./exports";
 
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
 export async function learningFetch(request:Request, env:Cloudflare.Env,ctx:ExecutionContext):Promise<Response|null>{
@@ -19,11 +20,21 @@ export async function learningFetch(request:Request, env:Cloudflare.Env,ctx:Exec
   if(!env.DB)return json({error:{code:"storage_unavailable",message:"Durable storage is unavailable. Your draft has not been saved."}},503);
   if(Number(request.headers.get("content-length")??0)>500_000)return json({error:{code:"too_large",message:"Split large inputs into sections."}},413);
   const repo=new D1Repository(env.DB);
+  let rpcId:string|number|null=null;
   try{
     const text=await request.text();if(text.length>500_000)throw new Fault("too_large","Split large inputs into sections.",413);
     const body=JSON.parse(text);
+    rpcId=body.id??null;
     const run=async(command:any)=>{
+      if(command.action==="source_file"){
+        const r=await transact(repo,owner,{action:"get",kind:"source",id:command.id},path==="/mcp"?"tutor":"learner");
+        if(!r.record.data.fileId||!env.BUCKET)throw new Fault("file_unavailable","No original file is available for this source.",404);
+        const file=await env.BUCKET.get(`${owner}/${r.record.data.fileId}`);if(!file)throw new Fault("file_missing","Original file unavailable.",404);
+        return {sourceId:command.id,mimeType:r.record.data.mimeType,base64:base64(new Uint8Array(await file.arrayBuffer())),limitations:r.record.data.limitations};
+      }
+      const before=(command.action==="confirm"||command.action==="delete_account")?await repo.load(owner):null;
       const result=await transact(repo,owner,command,path==="/mcp"?"tutor":"learner");
+      if(before&&env.BUCKET){const after=await repo.load(owner);const retained=new Set(Object.values(after.state.records.source).map(r=>r.data.fileId));for(const r of Object.values(before.state.records.source))if(r.data.fileId&&!retained.has(r.data.fileId))await env.BUCKET.delete(`${owner}/${r.data.fileId}`);}
       if(command.action==="request_job"||(command.action==="control_job"&&command.control==="resume"))ctx.waitUntil(runJobs(repo,owner));
       return result;
     };
@@ -44,7 +55,7 @@ export async function learningFetch(request:Request, env:Cloudflare.Env,ctx:Exec
     return json(await run(body));
   }catch(error){
     const fault=error instanceof Fault?error:new Fault("operation_failed",error instanceof Error?error.message:"Operation failed",400);
-    if(path==="/mcp")return json({jsonrpc:"2.0",id:null,error:{code:-32000,message:fault.message,data:{code:fault.code,saved:false}}});
+    if(path==="/mcp")return json({jsonrpc:"2.0",id:rpcId,error:{code:-32000,message:fault.message,data:{code:fault.code,saved:false}}});
     return json({error:{code:fault.code,message:fault.message},saved:false},fault.status);
   }
 }

@@ -9,10 +9,11 @@ The test suite names every baseline scenario B01–B23 and expanded scenario E01
 ## Current checks
 
 - Production build and TypeScript checks: passed during implementation.
-- 56 domain/protocol tests: passed, including corrections, assistance, checkpoint data, retry keys, concurrency, private policy separation, background outputs, and permission refusal.
+- 68 domain/protocol tests: passed, including corrections, assistance, checkpoint data, retry keys, concurrency, private policy separation, background outputs, and permission refusal.
 - Local D1 browser journey: course/source/outline creation, graph selection, actual weighted-distance transition, submission persistence, and session checkpoint exercised.
-- Code execution browser check identified an escaping defect; repair and repeat pending.
-- Real provisioned plugin tool calls and richer host surfaces: awaiting deployment/connection verification.
+- Isolated JavaScript execution: browser initially caught an escaping defect; repaired runner returned actual output `8`. Prediction-output exposure is now recorded separately.
+- Signed-in production viewer: owner sign-in and durable record read verified.
+- Real ChatGPT test with the exact selected plugin: blocked at tool discovery. Worker evidence identified a `server/discover` response using a legacy shape; MCP 2026-07-28 response repair is implemented and awaiting a published retest. An earlier unscoped prompt selected a different existing app; that read-only result is excluded from this product’s verification. No private record contents are included here.
 
 ## Supported-client status
 
@@ -30,9 +31,9 @@ The test suite names every baseline scenario B01–B23 and expanded scenario E01
 
 ## Genuine platform/integration boundaries and product gaps
 
-The available Sites tool catalog does not expose `list_plugin_eligibility`; no external connector IDs, visitor grants, or write permissions have been invented. GitHub/Google learning-resource integration is therefore **not implemented as a direct hosted connector**. A separately authorized connected tutor can import inspected content and provenance through data tools, but that does not verify provider synchronization or external writes. These PRD outcomes remain open.
+The available Sites tool catalog does not expose `list_plugin_eligibility`; no external connector IDs, visitor grants, or write permissions have been invented. GitHub/Google learning-resource integration is therefore **not implemented as a direct hosted connector**. A tutor-broker workflow is implemented (`ingest_external`, exports, and `external_receipt`) for separately connected service tools; it preserves inspected content and provider receipts without pretending that a receipt performs an external action. Provider synchronization and actual authorized external writes remain unverified.
 
-Only text/Markdown/CSV/JSON source uploads and structured text activities are currently implemented. Original PDF/image/handwriting ingestion, audio recording/playback, robust OCR, native Word export, and rich file formats remain requirements. Browser printing supplies a printable PDF route; it is not a dedicated PDF authoring service.
+Text/Markdown/CSV/JSON imports, original image/PDF/audio storage in private R2, image-point/page annotations, audio capture/playback controls, and OOXML Word export are implemented. Original-file tool reads and media/Word end-to-end verification remain open. Automatic OCR, PDF text extraction, pronunciation assessment, rich non-text formats, and a general Python/runtime sandbox remain requirements. Browser printing supplies a printable PDF route; it is not a dedicated PDF authoring service.
 
 Source-aligned preparation is deterministic extraction, not automatic generation/validation of arbitrary course-level assessments. Fresh full retests, cumulative checks, plan changes, and evidence-linked sheets are tutor-operated through tools; autonomous pedagogical quality requires real-chat evaluation. Scheduled notifications and ongoing jobs beyond the bounded runtime need a separately verified scheduler. No closed conversation is promised an automatic assistant turn.
 

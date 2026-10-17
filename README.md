@@ -6,9 +6,9 @@ This repository contains an implemented product with persistent storage and MCP 
 
 ## Use
 
-Open the deployed private Site, sign in with ChatGPT, and choose a synthetic lesson or introduce a course. In **Account & privacy**, authorize routine tutor updates and optionally bounded preparation. The tutor cannot grant itself those permissions.
+Open [the private app](https://learning-companion.copperplume66.chatgpt.site), sign in with ChatGPT, and choose a synthetic lesson or introduce a course. In **Account & privacy**, authorize routine tutor updates and optionally bounded preparation. The tutor cannot grant itself those permissions.
 
-Connect the Site’s provisioned plugin from **Plugins → Personal → Created by you**. In a fresh chat, ask: “Read Learning Companion’s capabilities and resume my saved session.” Use the learning tools to create sources, configure activities, submit actual learner responses, correct grades, change plans, and retrieve exact checkpoints. A standalone website is optional after initial identity/consent setup.
+Open [the provisioned plugin](https://chatgpt.com/plugins/plugin_asdk_app_sites_8a72aebe3f5c8191862ff1bd770e422b). Connect it from **Plugins → Personal → Created by you**. In a fresh chat, ask: “Read Learning Companion’s capabilities and resume my saved session.” Use the learning tools to create sources, configure activities, submit actual learner responses, correct grades, change plans, and retrieve exact checkpoints. A standalone website is optional after initial identity/consent setup.
 
 The same account, activity ID, and version identify the working object in every surface. Scratch changes and submissions are separate. The UI reports durable saves independently from host message delivery.
 
