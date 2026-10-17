@@ -4,3 +4,5 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}@media print{.app-header,.app-footer,.workspace-actions,button,.modal-backdrop{display:none!important}.app-main{padding:0;max-width:none}body{background:white;color:black}.workspace,.resume-card{border:1px solid #aaa;break-inside:avoid}.learning-layout{display:block}.course-list{display:none}details{display:block}details>*{display:block!important}textarea{border:1px solid #aaa}h1{font-size:30px}}
 .source-image{max-width:100%;height:auto;border-radius:10px;border:1px solid var(--line)}audio{display:block;width:100%;margin:15px 0}
 .embedded .app-main{padding-bottom:120px}
+
+.workspace-fields{border:0;padding:0;margin:0;min-width:0}

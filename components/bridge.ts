@@ -13,7 +13,7 @@ export class HostBridge {
   };
   async request(method:string,params:Json={}){
     const id=this.nextId++;window.parent.postMessage({jsonrpc:"2.0",id,method,params},"*");
-    return new Promise<any>((resolve,reject)=>{this.pending.set(id,{resolve,reject});setTimeout(()=>{if(this.pending.delete(id))reject(new Error(`Host did not acknowledge ${method}. Saved work remains available.`));},method==="tools/call"&&params.name==="learning_authorize"?15*60_000:15_000);});
+    return new Promise<any>((resolve,reject)=>{this.pending.set(id,{resolve,reject});setTimeout(()=>{if(this.pending.delete(id))reject(new Error(`Host did not acknowledge ${method}. Saved work remains available.`));},method==="tools/call"&&["learning_authorize","learning_confirm"].includes(params.name)?15*60_000:15_000);});
   }
   async init(){
     const result=await this.request("ui/initialize",{protocolVersion:"2026-01-26",appInfo:{name:"Learning Companion",version:"1.0.0"},appCapabilities:{availableDisplayModes:["inline","fullscreen"],tools:{},updateModelContext:{},message:{text:{}}}});

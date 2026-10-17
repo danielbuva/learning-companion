@@ -32,3 +32,31 @@ export async function authorizeFromHost(repo:Repository,owner:string,params:Json
   }
   throw new Fault("busy","Permissions changed concurrently; reopen the form.",409);
 }
+
+export async function confirmFromHost(repo:Repository,owner:string,params:Json):Promise<Json>{
+  const capabilities=params._meta?.["io.modelcontextprotocol/clientCapabilities"];
+  if(!params.requestState&&!(capabilities?.elicitation&&(capabilities.elicitation.form!==undefined||capabilities.elicitation.url===undefined)))return {resultType:"complete",content:[{type:"text",text:"This client has no native confirmation form. Review the pending request in the private Site's Account & privacy view."}],structuredContent:{status:"requires_learner_confirmation",saved:false}};
+  for(let retry=0;retry<6;retry++){
+    const {revision,state}=await repo.load(owner);state.confirmationChallenges??={};
+    if(!state.access.read)throw new Fault("read_denied","Tutor access is revoked; use the private learner interface.",403);
+    if(params.requestState){
+      const challenge=state.confirmationChallenges[params.requestState];
+      if(!challenge||challenge.expires<Date.now())throw new Fault("confirmation_expired","Request a fresh confirmation form.",403);
+      if(challenge.resolved)return {resultType:"complete",content:[{type:"text",text:"Decision already saved."}],structuredContent:challenge.resolved};
+      const response=params.inputResponses?.confirmation;
+      if(!response)throw new Fault("host_response_required","Only the host's learner response can approve this request.",403);
+      const approved=response.action==="accept"&&response.content?.approve===true;
+      const result=execute(state,{action:"confirm",id:challenge.requestId,version:challenge.requestVersion,approved,key:`host-confirm-${params.requestState}`},"learner");
+      // Deletion may scrub cached state. Reinsert only this decision receipt, without deleted content.
+      state.confirmationChallenges??={};state.confirmationChallenges[params.requestState]={...challenge,resolved:result};
+      if(await repo.save(owner,revision,state))return {resultType:"complete",content:[{type:"text",text:JSON.stringify(result)}],structuredContent:result};
+    }else{
+      const request=state.records.share[params.arguments?.requestId];
+      if(!request||request.data.status!=="awaiting_learner_confirmation")throw new Fault("request_unavailable","This confirmation request is unavailable or already resolved.",404);
+      const token=crypto.randomUUID();state.confirmationChallenges[token]={expires:Date.now()+15*60_000,requestId:request.id,requestVersion:request.version};
+      for(const [id,c]of Object.entries(state.confirmationChallenges))if(c.expires<Date.now())delete state.confirmationChallenges[id];
+      if(await repo.save(owner,revision,state))return {resultType:"input_required",requestState:token,inputRequests:{confirmation:{method:"elicitation/create",params:{mode:"form",message:request.data.type==="request_delete"?`${request.data.title}. This permanently erases the selected learning record and related checkpoints, evidence, and originals. It cannot be undone. This does not delete unrelated records.`:`${request.data.title}. Approve only this selected snapshot for the declared purpose and destination: ${JSON.stringify(request.data.scope)}. This does not itself publish or send it; the tutor must separately perform and report any authorized delivery.`,requestedSchema:{type:"object",properties:{approve:{type:"boolean",title:request.data.type==="request_delete"?"Permanently delete the selected record":"Approve the selected sharing scope",default:false}},required:["approve"]}}}}};
+    }
+  }
+  throw new Fault("busy","The request changed concurrently; reopen the form.",409);
+}

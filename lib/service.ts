@@ -4,8 +4,9 @@ import { mcpResult } from "./mcp.ts";
 import { demoCommands, activityTemplate, activityTypes } from "./synthetic.ts";
 import { widgetDocument } from "./widget-document";
 import {base64} from "./exports";
-import {authorizeFromHost} from "./consent";
+import {authorizeFromHost,confirmFromHost} from "./consent";
 import {uploadFromTool} from "./files";
+import {flushFileDeletes} from "./erasure";
 
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
 export async function learningFetch(request:Request, env:Cloudflare.Env,ctx:ExecutionContext):Promise<Response|null>{
@@ -28,6 +29,11 @@ export async function learningFetch(request:Request, env:Cloudflare.Env,ctx:Exec
     const body=JSON.parse(text);
     rpcId=body.id??null;
     if(path==="/mcp"&&body.method==="tools/call"&&body.params?.name==="learning_authorize")return json({jsonrpc:"2.0",id:rpcId,result:await authorizeFromHost(repo,owner,body.params)});
+    if(path==="/mcp"&&body.method==="tools/call"&&body.params?.name==="learning_confirm"){
+      const result=await confirmFromHost(repo,owner,body.params);
+      if(result.structuredContent?.permanent){const erasure=await flushFileDeletes(repo,owner,env.BUCKET);result.structuredContent.erasure=erasure;result.content=[{type:"text",text:JSON.stringify(result.structuredContent)}];}
+      return json({jsonrpc:"2.0",id:rpcId,result});
+    }
     const run=async(command:any)=>{
       if(command.action==="upload_source")return uploadFromTool(repo,env.BUCKET,owner,command.data??{},command.key);
       if(command.action==="source_file"){
@@ -36,9 +42,9 @@ export async function learningFetch(request:Request, env:Cloudflare.Env,ctx:Exec
         const file=await env.BUCKET.get(`${owner}/${r.record.data.fileId}`);if(!file)throw new Fault("file_missing","Original file unavailable.",404);
         return {sourceId:command.id,mimeType:r.record.data.mimeType,base64:base64(new Uint8Array(await file.arrayBuffer())),limitations:r.record.data.limitations};
       }
-      const before=(command.action==="confirm"||command.action==="delete_account")?await repo.load(owner):null;
       const result=await transact(repo,owner,command,path==="/mcp"?"tutor":"learner");
-      if(before&&env.BUCKET){const after=await repo.load(owner);const retained=new Set(Object.values(after.state.records.source).map(r=>r.data.fileId));for(const r of Object.values(before.state.records.source))if(r.data.fileId&&!retained.has(r.data.fileId))await env.BUCKET.delete(`${owner}/${r.data.fileId}`);}
+      if(result.permanent)result.erasure=await flushFileDeletes(repo,owner,env.BUCKET);
+      else if(command.action==="snapshot")ctx.waitUntil(flushFileDeletes(repo,owner,env.BUCKET));
       if(command.action==="request_job"||(command.action==="control_job"&&command.control==="resume"))ctx.waitUntil(runJobs(repo,owner));
       return result;
     };

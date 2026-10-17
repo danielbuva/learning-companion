@@ -127,18 +127,22 @@ function deleteRecord(s: State, kind: Kind, id: string, now: string) {
     changed = false;
     for (const k of kinds) for (const r of all(s,k)) {
       if (targets.some(t => t.kind === k && t.id === r.id)) continue;
-      const refs = [r.data.courseId,r.data.sourceId,r.data.activityId,r.data.questionId,r.data.assessmentId,r.data.sourcePolicy];
+      const refs = [r.data.courseId,r.data.sourceId,r.data.activityId,r.data.questionId,r.data.assessmentId,r.data.sourcePolicy,r.data.targetId];
       if (targets.some(t => refs.includes(t.id))) { targets.push({kind:k,id:r.id}); changed=true; }
     }
   }
-  for (const target of targets) { delete s.records[target.kind][target.id]; s.tombstones.push(`${target.kind}:${target.id}`); }
+  s.pendingFileDeletes??=[];
+  for (const target of targets) {const file=s.records[target.kind][target.id]?.data.fileId;if(file&&!s.pendingFileDeletes.includes(file))s.pendingFileDeletes.push(file);delete s.records[target.kind][target.id]; s.tombstones.push(`${target.kind}:${target.id}`); }
   const deleted = targets.map(t=>t.id);
   for (const k of kinds) for (const r of all(s,k)) {
+    const before=JSON.stringify(r.data);
     for (const field of ["skillIds","questionIds","prerequisites","sourceIds"]) if (r.data[field]) r.data[field] = r.data[field].filter((v:string)=>!deleted.includes(v));
-    if (r.kind === "session") { delete r.data.checkpoint; delete r.data.lastContext; }
+    if (r.kind === "session") for(const field of ["checkpoint","lastContext"])if(r.data[field]&&deleted.some(id=>JSON.stringify(r.data[field]).includes(id)))delete r.data[field];
+    if(JSON.stringify(r.data)!==before){r.version++;r.updated=now;history(s,"references_removed",r,now,"learner",undefined,"References to permanently deleted records removed.");}
   }
   s.history = s.history.filter(e=>!deleted.some(id=>JSON.stringify(e).includes(id)));
   s.receipts = {}; // No cached result may rehydrate deleted content.
+  s.confirmationChallenges = {}; // Approved sharing receipts can contain the selected snapshot.
   history(s,"permanently_deleted",null,now,"learner",undefined,`Erased ${targets.length} related records. Content cannot be restored.`);
   return { deleted:targets.length, permanent:true };
 }
@@ -164,11 +168,21 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
   }
   if (c.action === "compare") { const a=item(s,c.kind!,c.id!),b=item(s,c.kind!,c.otherId);return { left:a,right:b,changedFields:[...new Set([...Object.keys(a.data),...Object.keys(b.data)])].filter(k=>JSON.stringify(a.data[k])!==JSON.stringify(b.data[k])) }; }
   if (c.action === "export") {
-    const selected=c.ids?kinds.flatMap(k=>all(s,k)).filter(r=>c.ids.includes(r.id)):kinds.flatMap(k=>all(s,k));
-    const records=c.unmasteredOnly?selected.filter(r=>r.kind!=="skill"||!["locally_ready","robust"].includes(evidence(s,r.id).status)):selected;
+    const selected=(c.ids?kinds.flatMap(k=>all(s,k)).filter(r=>c.ids.includes(r.id)):kinds.flatMap(k=>all(s,k))).filter(r=>!c.courseId||r.id===c.courseId||r.data.courseId===c.courseId);
+    const evidenceStandard=c.evidenceStandard??"locally_ready";
+    if(c.unmasteredOnly&&!["locally_ready","robust","independent_success"].includes(evidenceStandard))throw new Fault("unknown_standard","Choose locally_ready, robust, or independent_success.");
+    const cleared=(id:string)=>{const e=evidence(s,id);return evidenceStandard==="robust"?e.status==="robust":evidenceStandard==="independent_success"?e.independentSuccesses>0:["locally_ready","robust"].includes(e.status);};
+    const records=c.unmasteredOnly?selected.flatMap(r=>{
+      if(r.kind==="skill")return cleared(r.id)?[]:[r];
+      // An unscoped source may mix cleared and uncleared material. Never silently
+      // call its complete contents an "unmastered-only" sheet.
+      if(r.data.sections){const sections=r.data.sections.filter((p:Json)=>p.skillIds?.length&&p.skillIds.every((id:string)=>!cleared(id)));return sections.length?[{...r,data:{...r.data,content:sections.map((p:Json)=>p.content).join("\n\n"),sections}}]:[];}
+      return r.data.skillIds?.length&&r.data.skillIds.every((id:string)=>!cleared(id))?[r]:[];
+    }):selected;
     const markdown=records.map(r=>`## ${r.data.title??r.id}\n\n${r.data.content??r.data.prompt??JSON.stringify(hydrated(s,r).data,null,2)}`).join("\n\n");
-    if(c.format==="docx")return {format:"docx",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",filename:"learning-record.docx",base64:base64(wordDocument("Learning Companion",markdown)),private:true};
-    return { format:c.format??"json", content:c.format==="markdown"?markdown:c.format==="flashcards"?records.filter(r=>r.kind==="question").map(r=>`${String(r.data.prompt).replaceAll("\t"," ")}\t${String(r.data.answer??"").replaceAll("\t"," ")}`).join("\n"):{schema:1,records}, private:true, includesAnswerKeys:c.format==="flashcards", warning:c.format==="flashcards"?"Answer-bearing export; use for authorized offline review, not cold assessment.":undefined };
+    const filtering=c.unmasteredOnly?{evidenceStandard,omitted:selected.filter(r=>!records.some(v=>v.id===r.id)).map(r=>r.id),limits:"Unscoped or mixed material is omitted. Ask the tutor to author skill-aligned sections for missing coverage."}:{};
+    if(c.format==="docx")return {format:"docx",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",filename:"learning-record.docx",base64:base64(wordDocument("Learning Companion",markdown)),private:true,...filtering};
+    return { format:c.format??"json", content:c.format==="markdown"?markdown:c.format==="flashcards"?records.filter(r=>r.kind==="question").map(r=>`${String(r.data.prompt).replaceAll("\t"," ")}\t${String(r.data.answer??"").replaceAll("\t"," ")}`).join("\n"):{schema:1,records}, private:true,...filtering, includesAnswerKeys:c.format==="flashcards", warning:c.format==="flashcards"?"Answer-bearing export; use for authorized offline review, not cold assessment.":undefined };
   }
   if (!c.key || c.key.length>150) throw new Fault("idempotency_required","Every mutation needs a unique key; reuse it only for the same retry.");
   const digest=fingerprint({...c,key:undefined});const prior=s.receipts[c.key];
@@ -345,8 +359,9 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
     }
     case "delete_account": {
       if(actor!=="learner"||c.confirmation!=="DELETE MY LEARNING RECORD")throw new Fault("learner_consent_required","The learner must explicitly confirm permanent account-record deletion.",403);
+      s.pendingFileDeletes=[...new Set([...(s.pendingFileDeletes??[]),...all(s,"source").map(r=>r.data.fileId).filter(Boolean)])];
       for(const k of kinds)for(const r of all(s,k))s.tombstones.push(`${k}:${r.id}`);
-      for(const k of kinds)s.records[k]={};s.history=[];s.receipts={};s.exposures={};s.access={read:false,write:false,background:false,recording:false,excluded:[]};result={deleted:true,permanent:true,retained:"Non-content deletion tombstones prevent automatic restoration."};break;
+      for(const k of kinds)s.records[k]={};s.history=[];s.receipts={};s.exposures={};s.consentChallenges={};s.confirmationChallenges={};s.access={read:false,write:false,background:false,recording:false,excluded:[]};result={deleted:true,permanent:true,retained:"Non-content deletion tombstones prevent automatic restoration."};break;
     }
     case "undo": {
       const e=s.history.find(e=>e.id===c.eventId);if(!e?.before)throw new Fault("not_reversible","This event has no eligible prior version.");
@@ -354,7 +369,24 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
     }
     case "import": {
       const imported=c.data?.records??[];if(!Array.isArray(imported)||imported.length>1000)throw new Fault("invalid_import","Supply at most 1,000 portable records.");
-      const created=[];for(const r of imported){if(["attempt","job","share"].includes(r.kind))throw new Fault("unsafe_import","Import evidence through a preserved submitted attempt; imported summaries cannot count as independent successes.");created.push(put(s,r.kind,r.id,{...r.data,origin:"imported",evidentialLimits:"Imported summary, not preserved independent assessment"},now,actor));}result={created:created.length};break;
+      const namespace=c.data?.namespace??"";if(namespace&&!/^[a-zA-Z0-9_-]{1,24}$/.test(namespace))throw new Fault("invalid_namespace","Use at most 24 letters, numbers, underscores, or hyphens.");
+      const eligible=imported.filter((r:Json)=>r.kind!=="share"),idMap=new Map(eligible.map((r:Json)=>[r.id,namespace?`${namespace}-${r.id}`:r.id]));
+      for(const r of eligible){if(!kinds.includes(r.kind)||!r.id||!r.data)throw new Fault("invalid_import","Each portable record needs a valid kind, ID, and data.");const id=String(idMap.get(r.id));if(s.records[r.kind]?.[id])throw new Fault("import_conflict",`Record ${id} already exists. Choose a new import namespace; existing work was preserved.`,409);}
+      if(new Set(eligible.map((r:Json)=>`${r.kind}:${r.id}`)).size!==eligible.length)throw new Fault("duplicate_import_id","The import contains duplicate record IDs.");
+      const refFields=new Set(["id","courseId","sourceId","sourceIds","activityId","questionId","questionIds","assessmentId","skillIds","prerequisites","sourcePolicy","targetId","branchedFrom","splitFrom","splitInto","mergedFrom","priorEvidenceReference","priorEvidenceReferences","outputId"]);
+      const remap=(v:any,key=""):any=>Array.isArray(v)?v.map(value=>remap(value,key)):v&&typeof v==="object"?Object.fromEntries(Object.entries(v).map(([k,value])=>[k,remap(value,k)])):typeof v==="string"&&refFields.has(key)&&idMap.has(v)?idMap.get(v):v;
+      // Stage only owned portable records, then validate all references together.
+      // No permission, sharing token, active job, or independent-evidence claim transfers.
+      const pending:Item[]=eligible.map((r:Json)=>{
+        const data=remap(structuredClone(r.data));data.importProvenance={originalId:r.id,originalVersion:r.version,importedAt:now,declaredOrigin:r.data.origin};data.origin="imported";data.evidentialLimits="Imported work preserves reported history; this service has not verified its original conditions and does not count it as clean independent evidence.";
+        if(r.kind==="policy"){data.active=false;data.status="needs_scope_decision";}
+        if(r.kind==="job"){data.status="canceled";data.reason="Imported job receipt; no work is scheduled by import.";}
+        if(r.kind==="attempt"){data.originalActor=data.actor;data.actor=data.actor==="learner"?"learner":"imported";data.delivery="imported_not_delivered";data.support=Math.max(data.support??0,data.problemState?.support??0);}
+        if(r.kind==="source"&&data.fileId){delete data.fileId;data.limitations=[...(data.limitations??[]),"Original binary is not included in this portable JSON. Upload it separately before citing it."];}
+        const created={id:String(idMap.get(r.id)),kind:r.kind,version:1,created:now,updated:now,data} as Item;s.records[r.kind][created.id]=created;return created;
+      });
+      for(const r of pending){if(!/^[a-zA-Z0-9_.:-]{1,100}$/.test(r.id)||s.tombstones.includes(`${r.kind}:${r.id}`))throw new Fault("deleted_or_invalid_id","Choose an import namespace with valid, non-deleted IDs.");validateData(s,r.kind,r.data);history(s,"imported",r,now,actor,undefined,"Portable history imported with evidential limits; no standing access transferred.");if(r.kind==="activity"&&r.data.support)s.exposures[r.data.fingerprint??r.id]=Math.max(s.exposures[r.data.fingerprint??r.id]??0,r.data.support);}
+      result={created:pending.length,omittedSharingRecords:imported.length-eligible.length,ids:pending.map(r=>({kind:r.kind,id:r.id})),authorizationTransferred:false,evidentialLimits:"Imported attempts are available for inspection but do not certify clean independent performance."};break;
     }
     default: throw new Fault("unsupported",`Unsupported operation ${c.action}; inspect discover for supported actions.`,400);
   }
