@@ -19,7 +19,7 @@ export const emptyState = (): State => ({ schema: 1, records: Object.fromEntries
 export const all = (s: State, kind: string): Item[] => Object.values(s.records[kind] ?? {});
 export const jsonBytes=(value:unknown)=>new TextEncoder().encode(JSON.stringify(value)).byteLength;
 export function item(s: State, kind: string, id: string): Item {
-  const r = s.records[kind]?.[id];
+  const group=s.records[kind],r=group&&Object.hasOwn(group,id)?group[id]:undefined;
   if (!r) throw new Fault("not_found", `${kind} ${id} is unavailable or deleted.`, 404);
   return r;
 }
@@ -48,7 +48,7 @@ export function evidence(s: State, skillId: string) {
   const contrast = independent.some(a => a.data.novelty === "near_transfer" || a.data.assessment.dimensions?.includes("discriminate"));
   const locallyReady = independent.length > 0 && sound && contrast;
   const delayed = independent.some(a => a.data.delayed === true && a.data.delayEvidence?.previousAt && Date.parse(a.created) > Date.parse(a.data.delayEvidence.previousAt));
-  const robust = locallyReady && (delayed || independent.some(a => a.data.novelty === "near_transfer" && a.data.unlabelled === true));
+  const robust = locallyReady && independent.length>=2 && (delayed || independent.some(a => a.data.novelty === "near_transfer" && a.data.unlabelled === true));
   const retrievalFailure = attempts.some(a => a.data.delayed && a.data.assessment?.outcome === "incorrect" && !attempts.some(b => b.created > a.created && b.data.delayed && b.data.assessment?.outcome === "correct"));
   return { status: retrievalFailure ? "needs_review" : robust ? "robust" : locallyReady ? "locally_ready" : attempts.length ? "developing" : "unassessed", dimensions: dims, retention: delayed ? "demonstrated_delayed" : "unobserved", uncertainty: independent.length >= 2 ? "medium" : "high", attempts: attempts.map(a => a.id), independentSuccesses: independent.length, reason: !attempts.length ? "No assessed learner work yet." : !independent.length ? "Supported, exposed, or incomplete evidence; independent performance remains untested." : !sound ? "A correct independent answer is recorded; decisive reasoning remains untested." : !contrast ? "A contrasting or varied independent case is still needed." : retrievalFailure ? "Delayed retrieval needs review; prior application evidence is preserved." : "Independent reasoning and a varied case are recorded. Retention is a separate dimension." };
 }

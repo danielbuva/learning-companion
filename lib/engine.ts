@@ -5,12 +5,14 @@ import {changedRegion} from "./source-diff.ts";
 
 const maxText = 300_000;
 const readActions = ["discover", "snapshot", "get", "search", "resume", "explain", "export", "compare", "mentions"];
+function mergeData(base:Json,patch:Json):Json{return Object.fromEntries([...new Set([...Object.keys(base),...Object.keys(patch)])].map(key=>[key,Object.hasOwn(patch,key)?patch[key]&&typeof patch[key]==="object"&&!Array.isArray(patch[key])&&base[key]&&typeof base[key]==="object"&&!Array.isArray(base[key])?mergeData(base[key],patch[key]):patch[key]:base[key]]));}
 function validateData(s: State, kind: Kind, data: Json) {
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Fault("invalid", "data must be an object.");
   if (jsonBytes(data) > maxText) throw new Fault("too_large", "Record exceeds 300 KB. Split the material into sections.", 413);
   if (kind === "profile" && data.mastery) throw new Fault("layer_boundary", "Mastery belongs to topic evidence, not the learner profile.");
   if (kind === "policy" && data.personalProfile) throw new Fault("layer_boundary", "Store personal profiles separately from engine rules.");
   if (kind === "skill" && (data.status || data.dimensions)) throw new Fault("evidence_required", "Status is derived from attempts. Save learnerJudgment or tutorJudgment separately.");
+  if(data.fingerprint!==undefined&&(typeof data.fingerprint!=="string"||["__proto__","constructor","prototype"].includes(data.fingerprint)))throw new Fault("invalid_fingerprint","Use a stable string fingerprint outside reserved object keys.");
   for (const [field, target] of Object.entries({ courseId: "course", activityId: "activity", sourceId: "source", questionId: "question", assessmentId: "assessment" })) {
     if (data[field]) item(s, target, data[field]);
   }
@@ -28,8 +30,9 @@ function history(s: State, action: string, record: Item | null, now: string, act
 }
 function put(s: State, kind: Kind, id: string, data: Json, now: string, actor: string, version?: number, note?: string): Item {
   if (!kinds.includes(kind)) throw new Fault("invalid_kind", "Unknown record kind.");
-  if (!/^[a-zA-Z0-9_.:-]{1,100}$/.test(id)) throw new Fault("invalid_id", "Use a stable ID of at most 100 letters, numbers, dots, colons, or hyphens.");
+  if (!/^[a-zA-Z0-9_.:-]{1,100}$/.test(id)||["__proto__","constructor","prototype"].includes(id)) throw new Fault("invalid_id", "Use a stable non-reserved ID of at most 100 letters, numbers, dots, colons, or hyphens.");
   if (s.tombstones.includes(`${kind}:${id}`)) throw new Fault("deleted", "This ID was permanently deleted; it cannot be restored.", 410);
+  if(kind==="activity"&&data.draft){data={...data,draft:{...data.draft}};for(const key of ["selection","structure","state","execution"])delete data.draft[key];}
   validateData(s, kind, data);
   const before = s.records[kind][id];
   if (before) checkVersion(before, version);
@@ -198,7 +201,7 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
     if(c.format==="docx")return {format:"docx",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",filename:"learning-record.docx",base64:base64(wordDocument("Learning Companion",markdown)),private:true,...filtering};
     return { format:c.format??"json", content:c.format==="markdown"?markdown:c.format==="flashcards"?records.filter(r=>r.kind==="question").map(r=>`${String(r.data.prompt).replaceAll("\t"," ")}\t${String(r.data.answer??"").replaceAll("\t"," ")}`).join("\n"):{schema:1,records}, private:true,...filtering, includesAnswerKeys:c.format==="flashcards", warning:c.format==="flashcards"?"Answer-bearing export; use for authorized offline review, not cold assessment.":undefined };
   }
-  if (!c.key || c.key.length>150) throw new Fault("idempotency_required","Every mutation needs a unique key; reuse it only for the same retry.");
+  if (typeof c.key!=="string"||!c.key||c.key.length>150||["__proto__","constructor","prototype"].includes(c.key)) throw new Fault("idempotency_required","Every mutation needs a unique non-reserved key; reuse it only for the same retry.");
   const digest=fingerprint({...c,key:undefined});const prior=s.receipts[c.key];
   if(prior){if(prior.digest!==digest)throw new Fault("key_reused","That retry key belongs to a different operation.",409);return {...prior.result,replayed:true};}
   if (!s.access.recording && (actor==="tutor" && !["request_permission","consent"].includes(c.action) || c.action==="submit")) throw new Fault("recording_paused","Recording is paused; no learning inference was saved.",403);
@@ -221,7 +224,7 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
       const r=item(s,c.kind!,c.id!);checkVersion(r,c.version);
       if(["attempt","job","share"].includes(r.kind))throw new Fault("use_specific_action","Use the evidence, job, or consent action.");
       const patch=c.action==="patch"?c.data??{}:{archived:c.action==="archive"};
-      result={record:put(s,r.kind,r.id,{...r.data,...patch},now,actor,r.version,c.reason)};break;
+      result={record:put(s,r.kind,r.id,mergeData(r.data,patch),now,actor,r.version,c.reason)};break;
     }
     case "duplicate": case "branch": {
       const r=item(s,c.kind??"activity",c.id!);result={record:put(s,r.kind,c.newId,{...structuredClone(r.data),branchedFrom:r.id,...(c.data??{})},now,actor)};break;
@@ -247,7 +250,7 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
       const automatic=activityGrade(a,response);const deferred=a.data.mode==="assess";
       const assessment=deferred?null:automatic;
       const synthetic=a.data.synthetic??s.records.course[a.data.courseId]?.data.synthetic??(a.data.courseId==="demo-algorithms");
-      const attempt=put(s,"attempt",c.attemptId??`attempt-${fingerprint(c.key)}`,{ activityId:a.id,questionId:a.data.questionId,assessmentId:a.data.assessmentId,courseId:a.data.courseId,skillIds:a.data.skillIds??[],prompt:a.data.prompt,response,problemState:structuredClone(a.data),actor:synthetic?"synthetic":actor==="learner"||c.learnerResponse===true?"learner":"tutor",support,exposed:support>0,origin:c.origin??"workspace",novelty:a.data.novelty??"isomorphic",unlabelled:a.data.unlabelled??false,delayed:response.delayed??false,delayEvidence:response.delayEvidence,confidence:response.confidence??"unknown",confidenceSource:response.confidence?"stated":"unavailable",assessment,feedbackStatus:deferred?"withheld":"available",delivery:"saved_not_delivered",criteria:a.data.criteria??"Tutor must inspect the actual requested response." },now,actor);
+      const attempt=put(s,"attempt",c.attemptId??`attempt-${fingerprint(c.key)}`,{ activityId:a.id,questionId:a.data.questionId,assessmentId:a.data.assessmentId,courseId:a.data.courseId,skillIds:a.data.skillIds??[],prompt:a.data.prompt,response,problemState:structuredClone(a.data),actor:synthetic?"synthetic":actor==="learner"||c.learnerResponse===true?"learner":"tutor",support,exposed:support>0||Boolean(a.data.reveals?.length),origin:c.origin??"workspace",novelty:a.data.novelty??"isomorphic",unlabelled:a.data.unlabelled??false,delayed:response.delayed??false,delayEvidence:response.delayEvidence,confidence:response.confidence??"unknown",confidenceSource:response.confidence?"stated":"unavailable",assessment,feedbackStatus:deferred?"withheld":"available",delivery:"saved_not_delivered",criteria:a.data.criteria??"Tutor must inspect the actual requested response." },now,actor);
       let nextState=a.data.state;
       if(a.data.type==="graph"&&automatic?.outcome==="correct"&&!deferred){
         nextState=structuredClone(a.data.state);const vertex=response.selection??response.answer;
@@ -260,7 +263,7 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
       }
       const {selection:submittedSelection,structure:submittedStructure,state:submittedState,execution:submittedExecution,...submittedDraft}=response;
       put(s,"activity",a.id,{...a.data,state:nextState,selection:response.selection??a.data.selection,prompt:nextState!==a.data.state?`Settled vertices: ${nextState.settled.join(", ")}. Choose the next unsettled vertex and justify why it is safe. Directed edges have nonnegative weights.`:a.data.prompt,draft:submittedDraft,lastAttemptId:attempt.id},now,actor,a.version);
-      result={attempt,feedback:deferred?"Saved. Feedback is withheld until the agreed assessment boundary.":assessment?.feedback??"Saved for tutor grading; no automatic semantic grade was invented.",saved:true,delivery:"saved_not_delivered",nextMove:assessment?adaptive({...assessment,support}):null};break;
+      result={attempt:hydrated(s,attempt,true),feedback:deferred?"Saved. Feedback is withheld until the agreed assessment boundary.":assessment?.feedback??"Saved for tutor grading; no automatic semantic grade was invented.",saved:true,delivery:"saved_not_delivered",nextMove:assessment?adaptive({...assessment,support}):null};break;
     }
     case "record_execution": {
       const r=item(s,"activity",c.id!);checkVersion(r,c.version);
@@ -272,16 +275,24 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
     }
     case "grade": case "invalidate": {
       const r=item(s,"attempt",c.id!);checkVersion(r,c.version);
-      if(c.action==="grade"&&(!c.data?.reason||!c.data?.assessment?.outcome))throw new Fault("rubric_required","Supply assessment outcome and a decision-relevant reason.");
-      if(c.action==="grade"){const a=c.data!.assessment,max=s.records.question[r.data.questionId]?.data.points??1;if(!["correct","incorrect","partial","no_attempt","defective"].includes(a.outcome)||a.score!==undefined&&a.score!==null&&(!Number.isFinite(a.score)||a.score<0||a.score>max))throw new Fault("invalid_grade","Use a declared outcome and a finite item score within its available points.");}
-      result={record:put(s,"attempt",r.id,{...r.data,...(c.action==="invalidate"?{invalidated:true,excludeFromAssessment:c.excludeItem!==false,invalidReason:c.reason??"Defective item or tutor error"}:{assessment:c.data!.assessment,gradeReason:c.data!.reason,feedbackStatus:"available"})},now,actor,r.version,c.reason??c.data?.reason),totals:"Assessment totals and skill conclusions are derived from current valid item grades."};break;
+      const grade={...r.data.assessment,...c.data?.assessment};
+      if(c.action==="grade"&&(!c.data?.reason||!grade.outcome))throw new Fault("rubric_required","Supply assessment outcome and a decision-relevant reason.");
+      if(c.action==="grade"){const max=s.records.question[r.data.questionId]?.data.points??1;if(!["correct","incorrect","partial","no_attempt","defective"].includes(grade.outcome)||grade.score!==undefined&&grade.score!==null&&(!Number.isFinite(grade.score)||grade.score<0||grade.score>max))throw new Fault("invalid_grade","Use a declared outcome and a finite item score within its available points.");}
+      result={record:put(s,"attempt",r.id,{...r.data,...(c.action==="invalidate"?{invalidated:true,excludeFromAssessment:c.excludeItem!==false,invalidReason:c.reason??"Defective item or tutor error"}:{assessment:grade,gradeReason:c.data!.reason,feedbackStatus:"available",...(c.revalidate?{invalidated:false}:{})})},now,actor,r.version,c.reason??c.data?.reason),totals:"Assessment totals and skill conclusions are derived from current valid item grades."};break;
     }
     case "reveal": {
       const r=item(s,"activity",c.id!);checkVersion(r,c.version);const level=c.level??1;
       if(r.data.mode==="assess"&&!c.endAssessment)throw new Fault("assessment_protected","End or explicitly change assessment mode before revealing help.",403);
       if(!Number.isInteger(level)||level<0||level>6)throw new Fault("invalid_hint","Support level must be H0–H6.");
+      let revealed=c.data?.text??(level===6?r.data.solution??r.data.answer:r.data.hints?.[Math.max(0,level-1)]);
+      if(level===6&&r.data.type==="graph"&&r.data.algorithm==="dijkstra"){
+        if(r.data.structure.edges.some((e:Json)=>!Number.isFinite(e.weight)||e.weight<0))throw new Fault("defective_item","Repair the invalid Dijkstra task before revealing a purported solution.");
+        const candidates=r.data.structure.nodes.filter((n:Json)=>!r.data.state.settled.includes(n.id)&&r.data.state.distances[n.id]!=null&&Number.isFinite(Number(r.data.state.distances[n.id]))),minimum=Math.min(...candidates.map((n:Json)=>Number(r.data.state.distances[n.id]))),choices=candidates.filter((n:Json)=>Number(r.data.state.distances[n.id])===minimum).map((n:Json)=>n.id);
+        revealed=choices.length?`At this saved step, settle ${choices.join(" or ")} with tentative distance ${minimum}. Every already settled distance is final; any shorter route would cross an unsettled frontier vertex with a smaller candidate, contradicting this minimum. Nonnegative remaining edges cannot reduce that route's cost. The display is unchanged; this answer is recorded as exposure.`:"No reachable unsettled vertex remains. Unreachable vertices keep infinite distance; this does not certify learner understanding.";
+      }
+      if(revealed!==undefined&&revealed!==null&&typeof revealed!=="string")throw new Fault("invalid_help","Supply actual help text; arbitrary objects cannot be recorded as revealed content.");
+      if(revealed===undefined||revealed===null||revealed===""){history(s,"help_requested",r,now,actor,undefined,"No validated help content was revealed.");result={record:publicActivity(r),revealed:"No validated hint is stored; ask the tutor for a targeted cue.",support:r.data.support??0,evidence:"help_requested_no_exposure"};break;}
       const fp=r.data.fingerprint??r.id;s.exposures[fp]=Math.max(s.exposures[fp]??0,level);
-      const revealed=level===6?r.data.solution??r.data.answer:r.data.hints?.[Math.max(0,level-1)]??"No validated hint is stored; ask the tutor for a targeted cue.";
       const updated=put(s,"activity",r.id,{...r.data,support:s.exposures[fp],mode:c.endAssessment?"explain":r.data.mode,visibleHelp:revealed,reveals:[...(r.data.reveals??[]),{level,text:revealed,at:now,actor:"tutor"}]},now,actor,r.version);
       result={record:publicActivity(updated),revealed,support:s.exposures[fp],evidence:"exposure_only",nextMove:adaptive({directAnswer:level===6,support:level})};break;
     }
@@ -289,7 +300,7 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
       const r=item(s,"activity",c.id!);checkVersion(r,c.version);
       if(r.data.mode==="assess")throw new Fault("assessment_protected","Tutor demonstrations are concealed during assessment.",403);
       s.exposures[r.data.fingerprint??r.id]=Math.max(s.exposures[r.data.fingerprint??r.id]??0,4);
-      result={record:publicActivity(put(s,"activity",r.id,{...r.data,...c.data,support:4,contribution:"tutor demonstration"},now,actor,r.version)),evidenceCreated:false};break;
+      result={record:publicActivity(put(s,"activity",r.id,{...mergeData(r.data,c.data??{}),support:4,contribution:"tutor demonstration"},now,actor,r.version)),evidenceCreated:false};break;
     }
     case "delivery": {
       const r=item(s,"attempt",c.id!);checkVersion(r,c.version);result={record:put(s,"attempt",r.id,{...r.data,delivery:c.delivered?"host_accepted":"delivery_failed"},now,actor,r.version),note:c.delivered?"Host accepted the message; an assistant response is not guaranteed.":"Saved action retained. Tutor delivery failed."};break;
@@ -421,7 +432,7 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
         if(r.kind==="source"&&data.fileId){delete data.fileId;data.limitations=[...(data.limitations??[]),"Original binary is not included in this portable JSON. Upload it separately before citing it."];}
         const created={id:String(idMap.get(r.id)),kind:r.kind,version:1,created:now,updated:now,data} as Item;s.records[r.kind][created.id]=created;return created;
       });
-      for(const r of pending){if(!/^[a-zA-Z0-9_.:-]{1,100}$/.test(r.id)||s.tombstones.includes(`${r.kind}:${r.id}`))throw new Fault("deleted_or_invalid_id","Choose an import namespace with valid, non-deleted IDs.");validateData(s,r.kind,r.data);history(s,"imported",r,now,actor,undefined,"Portable history imported with evidential limits; no standing access transferred.");if(r.kind==="activity"&&r.data.support)s.exposures[r.data.fingerprint??r.id]=Math.max(s.exposures[r.data.fingerprint??r.id]??0,r.data.support);}
+      for(const r of pending){if(!/^[a-zA-Z0-9_.:-]{1,100}$/.test(r.id)||["__proto__","constructor","prototype"].includes(r.id)||s.tombstones.includes(`${r.kind}:${r.id}`))throw new Fault("deleted_or_invalid_id","Choose an import namespace with valid, non-deleted IDs.");validateData(s,r.kind,r.data);history(s,"imported",r,now,actor,undefined,"Portable history imported with evidential limits; no standing access transferred.");if(r.kind==="activity"&&r.data.support)s.exposures[r.data.fingerprint??r.id]=Math.max(s.exposures[r.data.fingerprint??r.id]??0,r.data.support);}
       result={created:pending.length,omittedSharingRecords:imported.length-eligible.length,ids:pending.map(r=>({kind:r.kind,id:r.id})),authorizationTransferred:false,evidentialLimits:"Imported attempts are available for inspection but do not certify clean independent performance."};break;
     }
     default: throw new Fault("unsupported",`Unsupported operation ${c.action}; inspect discover for supported actions.`,400);

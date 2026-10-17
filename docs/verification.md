@@ -9,7 +9,7 @@ The test suite names every baseline scenario B01–B23 and expanded scenario E01
 ## Current checks
 
 - Production build and TypeScript checks: passed during implementation.
-- 89 domain/protocol tests: passed, including corrections, assistance, checkpoint data, retry keys, concurrency, private policy separation, background outputs, and permission refusal.
+- 93 domain/protocol tests: passed, including corrections, assistance, checkpoint data, retry keys, concurrency, private policy separation, background outputs, and permission refusal.
 - Local D1 browser journey: course/source/outline creation, graph selection, actual weighted-distance transition, submission persistence, and session checkpoint exercised.
 - Isolated JavaScript execution: browser initially caught an escaping defect; repaired runner returned actual output `8`. Prediction-output exposure is now recorded separately.
 - Signed-in production viewer: owner sign-in and durable record read verified.
@@ -26,10 +26,10 @@ The test suite names every baseline scenario B01–B23 and expanded scenario E01
 | Mobile browser viewer | Responsive layouts and keyboard/text alternatives | Not yet exercised on physical mobile |
 | MCP read/write, text-only lessons | Generic owned-record control plus evidence/checkpoint/job actions | Actual local HTTP passed; native app tool reads passed; real ChatGPT model read/write passed; cross-chat paused-state recovery passed between web/Work and this connected Codex chat |
 | In-chat mini-app | Self-contained MCP Apps UI and two-way messages | Real native app rendering and removable selection context passed; native submission, delivery, and tutor feedback passed |
-| Fullscreen | `ui/request-display-mode`, same server activity | Native global fullscreen rendered; a mode request saved and retained the exact draft, but this global entry kept fullscreen |
+| Fullscreen | `ui/request-display-mode`, same server activity | Native global entry and fresh standard-chat inline → fullscreen → inline passed with selection and draft intact |
 | Sidebar/panel | Global/thread entrypoint declarations | Open-plugin global entry and adjacent chat verified; thread-panel entry pending |
 | Custom file editor | `.lcnotes`, `.lcactivity`, host read/write/ETag | Native file-entry test pending; app-owned notes supported |
-| Composer references | Mention search, resource reads, removable selected context | Host test pending |
+| Composer references | Mention search, resource reads, removable selected context | Native vertex context/removal passed; source-reference test pending |
 | iOS/Android ChatGPT | Capability detection, data-tool equivalent | Not tested; no native-support claim |
 
 ## Genuine platform/integration boundaries and product gaps
@@ -43,3 +43,5 @@ Source-aligned preparation is deterministic extraction, not automatic generation
 Sharing requests create explicitly approved scoped records with revocation, but a public/shared snapshot delivery channel is not yet provided. No private content is published by those requests. Portable JSON history import/export is implemented with collision protection, namespacing, no access transfer, and imported-evidence limits; binary originals must be transferred separately. Robust large-library storage, robust abuse/rate limiting, and a multi-user operational security review remain requirements.
 
 See [the scenario matrix](acceptance.md) for every PRD acceptance row and the remaining end-to-end checks.
+
+A fresh standard ChatGPT chat invoked discovery/resume/workspace, recovered the same saved graph and active policy without attachments, and rendered the real app inline. Inline → fullscreen → inline preserved B selection, step 2, distances, and reasoning. This account had custom-app CSP enforcement off; no account security setting was changed. The current build adds its own restrictive native-document CSP and is awaiting its final deployed retest.

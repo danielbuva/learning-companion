@@ -42,3 +42,5 @@ For external destinations, use the host’s separately connected GitHub/Google/o
 Every ordinary app edit maps to the operations above: source upload/read → source/file operations; notes → artifacts; activity drafts/state → activity patch; actual submission → submit; policy import → import_policy; background buttons → request_job/control_job; display choices → preference records; export → export. Identity, consent, and permanent destructive confirmation use the learner’s authenticated interface where the host requires it.
 
 See [verification](verification.md) for tested clients and remaining end-to-end requirements. No declaration, rendered card, or saved widget state by itself proves durable storage or native host support.
+
+For an unseen active policy version, retrieve its governing operating/adaptive/session parts (A/B/F) or individual bootstrap document. The compact resumption summary is an index, not a replacement for the imported behavioral specification. No policy or source text can grant permissions.

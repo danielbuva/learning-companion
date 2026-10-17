@@ -101,3 +101,19 @@ test("invalid items leave explicit coverage gaps and tutor responses cannot sati
   run(repo.state,{action:"invalidate",id:submitted.attempt.id,version:1,reason:"Defective item"});const invalid=run(repo.state,{action:"get",kind:"assessment",id:"bar"}).record.data.result;assert.equal(invalid.maximum,0);assert.equal(invalid.coverageComplete,false);assert.equal(invalid.next,"replace_defective_items");assert.match(invalid.explanation,/no learner failure/);
   assert.throws(()=>run(repo.state,{action:"grade",id:submitted.attempt.id,version:2,data:{reason:"Invalid points",assessment:{outcome:"correct",score:999}}}),/available points/);
 });
+test("a revealed graph answer follows the current step rather than the original solution",()=>{
+  const repo=new Repo();seed(repo);run(repo.state,{action:"submit",id:"demo-graph",version:1,data:{selection:"C"}});const result=run(repo.state,{action:"reveal",id:"demo-graph",version:2,level:6});assert.match(result.revealed,/settle B with tentative distance 3/);assert.equal(result.record.data.state.step,2);
+});
+test("a missing hint does not invent assistance and an actual entry cue prevents a clean-evidence claim",()=>{
+  const repo=new Repo();run(repo.state,{action:"put",kind:"activity",id:"cue",data:{type:"card",validator:{type:"number",expected:2}}});
+  const missing=run(repo.state,{action:"reveal",id:"cue",version:1,level:1});assert.equal(missing.evidence,"help_requested_no_exposure");assert.equal(repo.state.exposures.cue,undefined);
+  run(repo.state,{action:"reveal",id:"cue",version:1,level:0,data:{text:"Use the relation from the preceding worked example."}});const answer=run(repo.state,{action:"submit",id:"cue",version:2,data:{answer:"2"}});assert.equal(answer.attempt.data.support,0);assert.equal(answer.attempt.data.exposed,true);
+});
+test("partial workspace changes preserve other graph state and score-only corrections preserve reasoning",()=>{
+  const repo=new Repo();seed(repo);const distances=structuredClone(repo.state.records.activity["demo-graph"].data.state.distances);run(repo.state,{action:"patch",kind:"activity",id:"demo-graph",version:1,data:{state:{step:2}}});assert.deepEqual(repo.state.records.activity["demo-graph"].data.state.distances,distances);
+  const attempt=run(repo.state,{action:"submit",id:"demo-graph",version:2,data:{selection:"C"}}).attempt;run(repo.state,{action:"grade",id:attempt.id,version:1,data:{assessment:{outcome:"correct",score:1,reasoning:"sound",dimensions:["apply"]},reason:"Synthetic rubric"}});const corrected=run(repo.state,{action:"grade",id:attempt.id,version:2,data:{assessment:{score:.5},reason:"Synthetic point-only correction"}});assert.equal(corrected.record.data.assessment.reasoning,"sound");assert.deepEqual(corrected.record.data.assessment.dimensions,["apply"]);
+});
+test("reserved object keys cannot become record identities or exposure fingerprints",()=>{
+  const repo=new Repo();for(const id of ["__proto__","constructor","prototype"])assert.throws(()=>run(repo.state,{action:"put",kind:"course",id,data:{title:"Synthetic invalid identity"}}),/non-reserved/);
+  assert.equal(Object.keys(repo.state.records.course).length,0);assert.throws(()=>run(repo.state,{action:"put",kind:"activity",id:"safe",data:{type:"card",fingerprint:"__proto__"}}),/fingerprint/);
+});
