@@ -1,12 +1,13 @@
-import { all, item, checkVersion, kinds, fingerprint, evidence, adaptive, publicActivity, Fault } from "./model.ts";
+import { all, item, checkVersion, kinds, fingerprint, evidence, adaptive, publicActivity, Fault, jsonBytes } from "./model.ts";
 import type { State, Item, Json, Command, Kind } from "./model.ts";
 import {wordDocument,base64} from "./exports.ts";
+import {changedRegion} from "./source-diff.ts";
 
 const maxText = 300_000;
 const readActions = ["discover", "snapshot", "get", "search", "resume", "explain", "export", "compare", "mentions"];
 function validateData(s: State, kind: Kind, data: Json) {
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Fault("invalid", "data must be an object.");
-  if (JSON.stringify(data).length > maxText) throw new Fault("too_large", "Record exceeds 300 KB. Split the material into sections.", 413);
+  if (jsonBytes(data) > maxText) throw new Fault("too_large", "Record exceeds 300 KB. Split the material into sections.", 413);
   if (kind === "profile" && data.mastery) throw new Fault("layer_boundary", "Mastery belongs to topic evidence, not the learner profile.");
   if (kind === "policy" && data.personalProfile) throw new Fault("layer_boundary", "Store personal profiles separately from engine rules.");
   if (kind === "skill" && (data.status || data.dimensions)) throw new Fault("evidence_required", "Status is derived from attempts. Save learnerJudgment or tutorJudgment separately.");
@@ -43,26 +44,30 @@ function put(s: State, kind: Kind, id: string, data: Json, now: string, actor: s
 }
 export function assessmentScore(s: State, r: Item): Json {
   const questionIds: string[] = r.data.questionIds ?? [];
-  const attempts = all(s, "attempt").filter(a => a.data.assessmentId === r.id && !a.data.invalidated);
+  const attempts = all(s, "attempt").filter(a => a.data.assessmentId === r.id);
   const rows = questionIds.map(id => {
     const q = s.records.question[id];
-    const a = attempts.filter(a => a.data.questionId === id).sort((a,b) => b.created.localeCompare(a.created)).at(0);
-    const defective = q?.data.defective === true || a?.data.assessment?.outcome === "defective";
-    return { questionId: id, skillIds: q?.data.skillIds ?? [], attemptId: a?.id, excluded: defective, score: defective ? null : a?.data.assessment?.score ?? null, max: q?.data.points ?? 1, outcome: a?.data.assessment?.outcome ?? "pending", independent: a ? a.data.support === 0 && !a.data.exposed : false };
+    const candidates=attempts.filter(a => a.data.questionId === id).sort((a,b) => b.created.localeCompare(a.created));
+    const latest=candidates[0],a=latest?.data.invalidated&&latest.data.excludeFromAssessment===false?candidates.find(a=>!a.data.invalidated):latest;
+    const defective = q?.data.defective === true || a?.data.assessment?.outcome === "defective" || Boolean(a?.data.invalidated);
+    return { questionId: id, skillIds: q?.data.skillIds ?? [], attemptId: a?.id, excluded: defective, score: defective ? null : a?.data.assessment?.score ?? null, max: q?.data.points ?? 1, outcome: defective?"defective":a?.data.assessment?.outcome ?? "pending", independent: a ? a.data.actor==="learner"&&!a.data.invalidated&&!["imported","self_reported"].includes(a.data.origin)&&a.data.support === 0 && !a.data.exposed : false };
   });
   const valid = rows.filter(r => !r.excluded), graded = valid.every(r => r.score !== null);
   const total = valid.reduce((sum, r) => sum + (r.score ?? 0), 0), maximum = valid.reduce((sum, r) => sum + r.max, 0);
   const errors: Json = {};
   for (const row of valid.filter(r => r.outcome === "incorrect")) for (const id of row.skillIds) errors[id] = (errors[id] ?? 0) + 1;
   const repeated = Object.entries(errors).filter(([, n]) => Number(n) >= (r.data.rules?.repeatedErrorLimit ?? Infinity)).map(([id]) => id);
-  const passed = graded && maximum > 0 && total / maximum >= (r.data.rules?.threshold ?? 0.8) && !repeated.length && (!r.data.rules?.independent || valid.every(r => r.independent));
-  return { rows, total, maximum, graded, passed, repeatedErrors: repeated, scope: r.data.scope, rules: r.data.rules, next: passed && r.data.cumulativeOnPass ? "fresh_cumulative" : passed ? "review_later" : "targeted_repair_then_requested_retest", explanation: !graded ? "Awaiting item-level grading." : repeated.length ? "Repeated-error rule was triggered." : passed ? "Declared pass rules met for this scope; this is not permanent mastery." : "Declared pass rules not met." };
+  const coverageComplete=valid.length===questionIds.length||r.data.rules?.allowOmittedItems===true;
+  const passed = graded && coverageComplete && maximum > 0 && total / maximum >= (r.data.rules?.threshold ?? 0.8) && !repeated.length && (!r.data.rules?.independent || valid.every(r => r.independent));
+  return { rows, total, maximum, graded, passed, coverageComplete, omittedItems:rows.filter(r=>r.excluded).map(r=>r.questionId), repeatedErrors: repeated, scope: r.data.scope, rules: r.data.rules, next: !coverageComplete||maximum===0?"replace_defective_items":passed && r.data.cumulativeOnPass ? "fresh_cumulative" : passed ? "review_later" : "targeted_repair_then_requested_retest", explanation: !coverageComplete||maximum===0?"Invalid items were excluded. Replace missing assessment coverage; no learner failure is inferred.":!graded ? "Awaiting item-level grading." : repeated.length ? "Repeated-error rule was triggered." : passed ? "Declared pass rules met for this scope; this is not permanent mastery." : "Declared pass rules not met." };
 }
 function hydrated(s: State, r: Item, forUI = false): Item & Json {
   const copy = forUI && (r.kind === "activity" || r.kind === "question") ? publicActivity(r) : structuredClone(r);
   if (r.kind === "skill") copy.data.evidence = evidence(s, r.id);
   if (r.kind === "assessment") copy.data.result = assessmentScore(s, r);
   if (r.kind === "activity") copy.data.support = Math.max(r.data.support ?? 0, s.exposures[r.data.fingerprint ?? r.id] ?? 0);
+  if (r.kind === "activity" && copy.data.draft) for(const key of ["selection","structure","state","execution"])delete copy.data.draft[key];
+  if (r.kind === "session" && copy.data.checkpoint?.activity)copy.data.checkpoint.activity=publicActivity(copy.data.checkpoint.activity);
   if (forUI && r.kind === "attempt" && copy.data.problemState) copy.data.problemState = publicActivity({ ...r, data: copy.data.problemState }).data;
   return copy;
 }
@@ -78,7 +83,7 @@ export function snapshot(s: State): Json {
   const sessions = all(s, "session").filter(r => r.data.status !== "completed");
   const active = sessions.sort((a,b) => b.updated.localeCompare(a.updated))[0];
   const reviews = all(s, "review").filter(r => r.data.status !== "paused" && r.data.status !== "completed").sort((a,b) => String(a.data.due).localeCompare(String(b.data.due))).slice(0, 3);
-  return { records, active, reviews, access: s.access, history: s.history.slice(-150).reverse().map(({ before, ...event }) => event), saved: true, asOf: new Date().toISOString(), recommendation: active?.data.nextAction ?? reviews[0]?.data.probe ?? "Name a course or goal in chat, or try the synthetic lesson.", reason: active ? "Continue the exact saved exercise before adding new work." : reviews.length ? reviews[0].data.reason : "No learning evidence has been assumed." };
+  return { records, active:active?hydrated(s,active,true):undefined, reviews, access: s.access, storage:{usedBytes:jsonBytes(s),maximumBytes:2_000_000}, history: s.history.slice(-150).reverse().map(({ before, ...event }) => event), saved: true, asOf: new Date().toISOString(), recommendation: active?.data.nextAction ?? reviews[0]?.data.probe ?? "Name a course or goal in chat, or try the synthetic lesson.", reason: active ? "Continue the exact saved exercise before adding new work." : reviews.length ? reviews[0].data.reason : "No learning evidence has been assumed." };
 }
 function checkAccess(s: State, c: Command, actor: string) {
   if (actor === "learner" || actor === "worker") return;
@@ -86,6 +91,12 @@ function checkAccess(s: State, c: Command, actor: string) {
   if (!s.access.read) throw new Fault("read_denied", "Tutor access is revoked.", 403);
   if (!readActions.includes(c.action) && !s.access.write) throw new Fault("write_denied", "Routine tutor writing is not authorized. The learner can approve it in Account & privacy.", 403);
   if (c.action === "consent" || c.action === "confirm" || c.action === "delete_account") throw new Fault("learner_consent_required", "Only a direct learner confirmation may grant permission or permanently delete records.", 403);
+}
+function versioned(s:State,kind:string,id:string,version?:number):Item{
+  const current=item(s,kind,id);if(!version||version===current.version)return current;
+  const earlier=s.history.find(e=>e.kind===kind&&e.recordId===id&&e.before?.version===version)?.before;
+  if(!earlier)throw new Fault("historical_version_unavailable","The requested source version is unavailable; no current version was substituted.",404);
+  return earlier;
 }
 function activityGrade(r: Item, response: Json): Json | null {
   if (r.data.type === "graph" && r.data.algorithm==="dijkstra") {
@@ -99,7 +110,9 @@ function activityGrade(r: Item, response: Json): Json | null {
     return { outcome: correct ? "correct" : "incorrect", reasoning: response.reasoning ? "unclear" : "absent", dimensions: ["apply"], score: correct ? 1 : 0, feedback: correct ? "That selection is valid for the current distances. Explain the governing condition before readiness is inferred." : "Compare tentative distances among unsettled vertices. Your graph and draft are preserved.", validator: "minimum_unsettled_distance" };
   }
   if (r.data.validator?.type === "number") {
-    const actual = Number(String(response.answer).trim());
+    const supplied=String(response.answer??"").trim();
+    if(!supplied)return {outcome:"no_attempt",reasoning:response.reasoning?"unclear":"absent",dimensions:[],score:null,feedback:"No numeric answer was submitted. The draft is retained without an inferred failure.",validator:"numeric"};
+    const actual = Number(supplied);
     const correct = Number.isFinite(actual) && Math.abs(actual - r.data.validator.expected) <= (r.data.validator.tolerance ?? 0);
     return { outcome: correct ? "correct" : "incorrect", reasoning: response.reasoning ? "unclear" : "absent", dimensions: r.data.dimensions ?? ["apply"], score: correct ? 1 : 0, feedback: correct ? "The requested numeric answer is correct; reasoning has not been independently graded." : "This numeric answer differs from the validated target.", validator: "numeric" };
   }
@@ -113,7 +126,8 @@ function importPolicy(s: State, c: Command, now: string, actor: string) {
   const order = ["A_", "B_", "C_", "D_", "E_", "F_", "H_", "G_", "Learner_Profile", "Current_Topic", "Tutor_Runtime"];
   const record = put(s, "policy", c.id!, { title: c.data?.title ?? "Imported teaching policy", scope: c.data?.scope ?? "global", active: false, status: "needs_scope_decision", versionLabel: c.data?.versionLabel ?? "imported", authority: order, parts: roles.filter(p => !["profile", "topic", "conversation"].includes(p.role)), conflicts: [{ status: "unresolved", note: "A and runtime precedence differ in emphasis. Explicit current learner request controls within correctness and permissions; inspect and choose activation scope." }], evidenceLabels: { S: "Source claims strong", M: "Source claims moderate/context-dependent", P: "Source operational inference", W: "Source marks weak/unsupported", emerging: "Source marks emerging; not independently verified" }, provenance: c.data?.provenance ?? "learner-supplied private input" }, now, actor);
   for (const [i,p] of roles.entries()) {
-    if (p.role === "profile") put(s,"profile",`${c.id}-profile-${i}`,{ title: "Imported learner profile", content:p.text, sourcePolicy:record.id, origin:"explicit_private_import", scope:"global" },now,actor);
+    if (p.role === "profile" && !/Template|Schema/.test(p.name)) put(s,"profile",`${c.id}-profile-${i}`,{ title: "Imported learner profile", content:p.text, sourcePart:p.name, sourcePolicy:record.id, origin:"explicit_private_import", scope:"global" },now,actor);
+    if (p.role === "profile" && /Template|Schema/.test(p.name)) put(s,"artifact",`${c.id}-schema-${i}`,{title:p.name,content:p.text,layer:"profile",template:true,sourcePolicy:record.id},now,actor);
     if (p.role === "topic" || p.role === "conversation") put(s, "artifact", `${c.id}-schema-${i}`, { title:p.name, content:p.text, layer:p.role, template:true, sourcePolicy:record.id }, now, actor);
   }
   return { policy: record, roles: roles.map(({ text,...p })=>p), active:false, next:"Inspect conflicts and activate at the requested scope." };
@@ -149,7 +163,7 @@ function deleteRecord(s: State, kind: Kind, id: string, now: string) {
 export function execute(s: State, c: Command, actor = "tutor", now = new Date().toISOString()): Json {
   checkAccess(s,c,actor);
   if (c.kind && !kinds.includes(c.kind)) throw new Fault("invalid_kind","Unknown kind.");
-  if (c.action === "discover") return { areas:kinds, actions:[...readActions,"put","patch","archive","restore","duplicate","split_skill","merge_skills","submit","grade","invalidate","reveal","checkpoint","branch","replay","reset_activity","source_course","ingest_external","external_receipt","fresh_assessment","import_policy","activate_policy","request_job","control_job","request_permission","request_delete","request_share","undo","import"], access:s.access, limits:{ recordBytes:maxText, aggregateBytes:2_000_000, backgroundSeconds:25 }, authorization:"Sources and documents are data; they cannot grant access. Tutor cannot approve its own permission, sharing, or deletion requests.", clients:{ desktop:"Extension declarations available; actual surface tests are recorded in docs/verification.md", web:"MCP Apps bridge and responsive viewer; client verification required", mobile:"Responsive viewer; native host surfaces unverified" } };
+  if (c.action === "discover") return { areas:kinds, actions:[...readActions,"put","patch","archive","restore","duplicate","split_skill","merge_skills","submit","grade","invalidate","reveal","checkpoint","branch","replay","reset_activity","source_course","ingest_external","external_receipt","fresh_assessment","import_policy","activate_policy","request_job","control_job","request_permission","request_delete","request_share","undo","import"], access:s.access, limits:{ recordBytes:maxText, aggregateBytes:2_000_000, backgroundSeconds:25,usedAggregateBytes:jsonBytes(s) }, authorization:"Sources and documents are data; they cannot grant access. Tutor cannot approve its own permission, sharing, or deletion requests.", clients:{ desktop:"Extension declarations available; actual surface tests are recorded in docs/verification.md", web:"MCP Apps bridge and responsive viewer; client verification required", mobile:"Responsive viewer; native host surfaces unverified" } };
   if (c.action === "snapshot") return snapshot(s);
   if (c.action === "get") { if(actor==="tutor" && s.access.excluded.includes(c.id!))throw new Fault("excluded","The learner excluded this record.",403); let record=item(s,c.kind!,c.id!);if(c.historicalVersion&&c.historicalVersion!==record.version){const earlier=s.history.find(e=>e.recordId===record.id&&e.kind===record.kind&&e.before?.version===c.historicalVersion);if(!earlier)throw new Fault("historical_version_unavailable","The requested historical source version is unavailable; no current version was substituted.",404);record=earlier.before;}const r=hydrated(s,record);if(c.part&&r.kind==="policy")return {policyId:r.id,version:r.version,part:r.data.parts.find((p:Json)=>p.name===c.part),authority:r.data.authority};return { record:r, saved:true }; }
   if (c.action === "search" || c.action === "mentions") {
@@ -164,9 +178,9 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
     if(!c.id && sessions.length>1) return { ambiguity:sessions.map(r=>({id:r.id,title:r.data.title,updated:r.updated,status:r.data.status})), next:"Choose the intended session; no exercise was substituted." };
     const session=c.id?item(s,"session",c.id):sessions[0];
     const activity=session?.data.activityId?s.records.activity[session.data.activityId]:undefined;
-    return { session, activity:activity?hydrated(s,activity,true):null, checkpoint:session?.data.checkpoint, policy:all(s,"policy").filter(r=>r.data.active&&(r.data.scope==="global"||r.data.scope===session?.data.courseId)).map(r=>({id:r.id,version:r.version,title:r.data.title,scope:r.data.scope,authority:r.data.authority,scopeDecision:r.data.scopeDecision,evidenceLabels:r.data.evidenceLabels,partsIndex:r.data.parts?.map((p:Json)=>({name:p.name,role:p.role})),runtimeSummary:"Observe actual response; retain uncertainty; select the least intrusive useful intervention; honor direct-answer requests; distinguish support, reasoning, independence, transfer, and delayed retrieval; retrieve relevant policy parts for authoritative detail."})), profile:all(s,"profile"), preferences:all(s,"preference").filter(r=>["global",session?.data.courseId,session?.id].includes(r.data.scope)), skills:all(s,"skill").filter(r=>r.data.courseId===session?.data.courseId).map(r=>hydrated(s,r)), next:session?.data.nextAction??"Begin with a goal and one authentic task.", saved:true };
+    return { session:session?hydrated(s,session,true):undefined, activity:activity?hydrated(s,activity,true):null, checkpoint:session?hydrated(s,session,true).data.checkpoint:undefined, policy:all(s,"policy").filter(r=>r.data.active&&(r.data.scope==="global"||r.data.scope===session?.data.courseId)).sort((a,b)=>(a.data.priority??0)-(b.data.priority??0)).map(r=>({id:r.id,version:r.version,title:r.data.title,scope:r.data.scope,priority:r.data.priority??0,authority:r.data.authority,scopeDecision:r.data.scopeDecision,evidenceLabels:r.data.evidenceLabels,partsIndex:r.data.parts?.map((p:Json)=>({name:p.name,role:p.role})),runtimeSummary:"Observe actual response; retain uncertainty; select the least intrusive useful intervention; honor direct-answer requests; distinguish support, reasoning, independence, transfer, and delayed retrieval; retrieve relevant policy parts for authoritative detail."})), profile:all(s,"profile").filter(r=>!r.data.template&&!r.data.archived), policyPrecedence:"Apply the declared scope decisions. Higher explicit priority applies later; current learner requests control within correctness and permissions.", preferences:all(s,"preference").filter(r=>["global",session?.data.courseId,session?.id].includes(r.data.scope)), skills:all(s,"skill").filter(r=>r.data.courseId===session?.data.courseId).map(r=>hydrated(s,r)), next:session?.data.nextAction??"Begin with a goal and one authentic task.", saved:true };
   }
-  if (c.action === "compare") { const a=item(s,c.kind!,c.id!),b=item(s,c.kind!,c.otherId);return { left:a,right:b,changedFields:[...new Set([...Object.keys(a.data),...Object.keys(b.data)])].filter(k=>JSON.stringify(a.data[k])!==JSON.stringify(b.data[k])) }; }
+  if (c.action === "compare") { const a=versioned(s,c.kind!,c.id!,c.leftVersion),b=versioned(s,c.kind!,c.otherId??c.id!,c.rightVersion);return { left:a,right:b,changedFields:[...new Set([...Object.keys(a.data),...Object.keys(b.data)])].filter(k=>JSON.stringify(a.data[k])!==JSON.stringify(b.data[k])),contentChanges:c.kind==="source"?changedRegion(String(a.data.extractedText??a.data.content??""),String(b.data.extractedText??b.data.content??"")):undefined }; }
   if (c.action === "export") {
     const selected=(c.ids?kinds.flatMap(k=>all(s,k)).filter(r=>c.ids.includes(r.id)):kinds.flatMap(k=>all(s,k))).filter(r=>!c.courseId||r.id===c.courseId||r.data.courseId===c.courseId);
     const evidenceStandard=c.evidenceStandard??"locally_ready";
@@ -195,7 +209,7 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
       if(actor!=="learner")throw new Fault("learner_consent_required","Only the learner can change grants.",403);
       for(const f of ["read","write","background","recording"])if(typeof c.data?.[f]==="boolean") (s.access as Json)[f]=c.data[f];
       if(Array.isArray(c.data?.excluded))s.access.excluded=c.data.excluded;
-      if(!s.access.background)for(const r of all(s,"job"))if(["queued","running","paused"].includes(r.data.status)){r.data.status="canceled";r.data.reason="Background authorization revoked";r.version++;}
+      for(const r of all(s,"job"))if(["queued","running","paused"].includes(r.data.status)&&(!s.access.background||!s.access.read||r.data.sourceIds?.some((id:string)=>s.access.excluded.includes(id)))){r.data.status="canceled";r.data.reason="Background or selected-source authorization revoked";r.version++;}
       history(s,"permissions_changed",null,now,actor,undefined,"Learner changed standing permissions.");result={access:s.access};break;
     }
     case "request_permission": result={request:"Learner confirmation required",requested:c.data,access:s.access};break;
@@ -244,21 +258,23 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
         }
         nextState.frontier=a.data.structure.nodes.map((n:Json)=>n.id).filter((id:string)=>!nextState.settled.includes(id)&&nextState.distances[id]!==null&&nextState.distances[id]!==undefined);nextState.step=(nextState.step??0)+1;
       }
-      put(s,"activity",a.id,{...a.data,state:nextState,selection:response.selection??a.data.selection,prompt:nextState!==a.data.state?`Settled vertices: ${nextState.settled.join(", ")}. Choose the next unsettled vertex and justify why it is safe. Directed edges have nonnegative weights.`:a.data.prompt,draft:response,lastAttemptId:attempt.id},now,actor,a.version);
+      const {selection:submittedSelection,structure:submittedStructure,state:submittedState,execution:submittedExecution,...submittedDraft}=response;
+      put(s,"activity",a.id,{...a.data,state:nextState,selection:response.selection??a.data.selection,prompt:nextState!==a.data.state?`Settled vertices: ${nextState.settled.join(", ")}. Choose the next unsettled vertex and justify why it is safe. Directed edges have nonnegative weights.`:a.data.prompt,draft:submittedDraft,lastAttemptId:attempt.id},now,actor,a.version);
       result={attempt,feedback:deferred?"Saved. Feedback is withheld until the agreed assessment boundary.":assessment?.feedback??"Saved for tutor grading; no automatic semantic grade was invented.",saved:true,delivery:"saved_not_delivered",nextMove:assessment?adaptive({...assessment,support}):null};break;
     }
     case "record_execution": {
       const r=item(s,"activity",c.id!);checkVersion(r,c.version);
       if(r.data.mode==="assess"&&!r.data.allowedTools)throw new Fault("assessment_tools_denied","Execution is not permitted in this assessment.",403);
       if(!c.data?.execution?.executed)throw new Fault("execution_receipt_required","Supply actual runner results, not a predicted trace.");
-      const support=r.data.task==="predict_output"?6:r.data.support??0;
+      const support=r.data.task==="predict_output"||!r.data.task?6:r.data.support??0;
       if(support)s.exposures[r.data.fingerprint??r.id]=Math.max(s.exposures[r.data.fingerprint??r.id]??0,support);
       result={record:publicActivity(put(s,"activity",r.id,{...r.data,...c.data,support},now,actor,r.version,"Actual isolated browser execution reported; not a server-verified grade or evidence of understanding.")),evidenceCreated:false};break;
     }
     case "grade": case "invalidate": {
       const r=item(s,"attempt",c.id!);checkVersion(r,c.version);
       if(c.action==="grade"&&(!c.data?.reason||!c.data?.assessment?.outcome))throw new Fault("rubric_required","Supply assessment outcome and a decision-relevant reason.");
-      result={record:put(s,"attempt",r.id,{...r.data,...(c.action==="invalidate"?{invalidated:true,invalidReason:c.reason??"Defective item or tutor error"}:{assessment:c.data!.assessment,gradeReason:c.data!.reason,feedbackStatus:"available"})},now,actor,r.version,c.reason??c.data?.reason),totals:"Assessment totals and skill conclusions are derived from current valid item grades."};break;
+      if(c.action==="grade"){const a=c.data!.assessment,max=s.records.question[r.data.questionId]?.data.points??1;if(!["correct","incorrect","partial","no_attempt","defective"].includes(a.outcome)||a.score!==undefined&&a.score!==null&&(!Number.isFinite(a.score)||a.score<0||a.score>max))throw new Fault("invalid_grade","Use a declared outcome and a finite item score within its available points.");}
+      result={record:put(s,"attempt",r.id,{...r.data,...(c.action==="invalidate"?{invalidated:true,excludeFromAssessment:c.excludeItem!==false,invalidReason:c.reason??"Defective item or tutor error"}:{assessment:c.data!.assessment,gradeReason:c.data!.reason,feedbackStatus:"available"})},now,actor,r.version,c.reason??c.data?.reason),totals:"Assessment totals and skill conclusions are derived from current valid item grades."};break;
     }
     case "reveal": {
       const r=item(s,"activity",c.id!);checkVersion(r,c.version);const level=c.level??1;
@@ -317,7 +333,8 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
     case "activate_policy": {
       const r=item(s,"policy",c.id!);checkVersion(r,c.version);
       if(!c.data?.scopeDecision)throw new Fault("scope_decision_required","State the learner-authorized scope and how traced conflicts are resolved.");
-      result={record:put(s,"policy",r.id,{...r.data,active:c.data.active!==false,scope:c.data.scope??r.data.scope,status:"active",scopeDecision:c.data.scopeDecision},now,actor,r.version)};break;
+      const decision=c.data.scopeDecision;
+      result={record:put(s,"policy",r.id,{...r.data,active:c.data.active!==false,scope:c.data.scope??r.data.scope,priority:c.data.priority??r.data.priority??0,status:c.data.active===false?"suspended":"active",scopeDecision:decision,conflicts:(r.data.conflicts??[]).map((conflict:Json)=>({...conflict,status:"resolved_for_declared_scope",scopeDecision:decision}))},now,actor,r.version)};break;
     }
     case "request_job": {
       if(!s.access.background)throw new Fault("background_denied","Background preparation is not authorized.",403);
@@ -325,22 +342,41 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
       if(!["practice_pack","memory_sheet","source_compare","review_plan","validate_questions"].includes(d.type))throw new Fault("unsupported_job","Unsupported preparation type.");
       if(!d.purpose||!d.sourceIds?.length)throw new Fault("scope_required","Specify purpose and source IDs before starting.");
       for(const id of d.sourceIds){item(s,"source",id);if(s.access.excluded.includes(id))throw new Fault("excluded","A selected source is excluded.",403);}
-      result={record:put(s,"job",c.id!,{...d,status:"queued",authorizedAt:now,resourceLimit:{seconds:25,externalSpend:0},outputId:`${c.id}-output`,generation:1},now,actor),saved:true};break;
+      if(d.type==="validate_questions"){if(!d.questionIds?.length)throw new Fault("scope_required","Select the questions whose structure should be checked.");for(const id of d.questionIds){const q=item(s,"question",id);if(s.access.excluded.includes(id)||q.data.sourceIds?.some((sourceId:string)=>!d.sourceIds.includes(sourceId)))throw new Fault("excluded","Questions must belong to the authorized source scope.",403);}}
+      result={record:put(s,"job",c.id!,{...d,sourceVersions:Object.fromEntries(d.sourceIds.map((id:string)=>[id,item(s,"source",id).version])),questionVersions:d.questionIds?Object.fromEntries(d.questionIds.map((id:string)=>[id,item(s,"question",id).version])):undefined,status:"queued",authorizedAt:now,resourceLimit:{seconds:25,externalSpend:0},outputId:`${c.id}-output`,generation:1},now,actor),saved:true};break;
     }
     case "control_job": {
       const r=item(s,"job",c.id!);checkVersion(r,c.version);
       if(!["pause","resume","cancel"].includes(c.control))throw new Fault("invalid_control","Use pause, resume, or cancel.");
+      if(["completed","failed","canceled"].includes(r.data.status))throw new Fault("terminal_job","This job is finished. Request a new job to prepare another version.",409);
       if(c.control==="resume"&&!s.access.background)throw new Fault("background_denied","Background authorization revoked.",403);
       result={record:put(s,"job",r.id,{...r.data,status:c.control==="pause"?"paused":c.control==="resume"?"queued":"canceled",generation:r.data.generation+1},now,actor,r.version)};break;
     }
     case "finish_job": {
       if(actor!=="worker")throw new Fault("worker_only","Job completion is reserved for the bounded worker.",403);
       const r=item(s,"job",c.id!);checkVersion(r,c.version);
-      if(!s.access.background||r.data.status!=="queued"||r.data.sourceIds.some((id:string)=>s.access.excluded.includes(id)||!s.records.source[id]))throw new Fault("job_revoked","Job no longer authorized.",403);
+      if(!s.access.background||!s.access.read||r.data.status!=="queued"||!r.data.sourceIds.length||r.data.sourceIds.some((id:string)=>s.access.excluded.includes(id)||!s.records.source[id]))throw new Fault("job_revoked","Job no longer authorized.",403);
+      if(r.data.sourceVersions&&r.data.sourceIds.some((id:string)=>r.data.sourceVersions[id]!==item(s,"source",id).version))throw new Fault("source_changed","A selected source changed after this job was authorized. Request preparation for the new source version.",409);
+      for(const id of r.data.questionIds??[]){const q=item(s,"question",id);if(s.access.excluded.includes(id)||q.data.sourceIds?.some((sourceId:string)=>s.access.excluded.includes(sourceId)||!r.data.sourceIds.includes(sourceId)))throw new Fault("job_revoked","Question authorization changed.",403);if(r.data.questionVersions?.[id]!==q.version)throw new Fault("question_changed","A selected question changed after authorization.",409);}
       const sources=r.data.sourceIds.map((id:string)=>item(s,"source",id));
-      const content=r.data.type==="source_compare"?sources.map((v:Item)=>`## ${v.data.title} (${v.version})\n${v.data.content}`).join("\n\n---\n\n") : r.data.type==="review_plan"?sources.map((v:Item)=>`- Retrieve one governing relation from ${v.data.title}; then test a contrasting case.`).join("\n") : sources.map((v:Item)=>String(v.data.content).split("\n").filter(x=>x.trim()).slice(0,12).map((x,i)=>r.data.type==="practice_pack"?`### ${i+1}. Explain, apply, or challenge this source statement\n${x}\n\nCriteria: cite the source, state conditions, and supply a meaningful example.\nValidation: requires tutor review; not a verified answer key.`:x).join("\n\n")).join("\n\n");
+      let content:string;
+      if(r.data.type==="source_compare"){
+        const spec=r.data.compareVersions;if(spec&&!r.data.sourceIds.includes(spec.sourceId))throw new Fault("comparison_scope","Select a source inside the authorized scope.");
+        const left=spec?versioned(s,"source",spec.sourceId,spec.leftVersion):sources[0],right=spec?versioned(s,"source",spec.sourceId,spec.rightVersion):sources[1];
+        if(!right)throw new Fault("comparison_scope","Select two source versions for comparison.");
+        content=JSON.stringify({left:{id:left.id,version:left.version},right:{id:right.id,version:right.version},...changedRegion(String(left.data.extractedText??left.data.content??""),String(right.data.extractedText??right.data.content??"")),next:"Tutor should inspect changed assumptions and update the plan only when authorized. Source revision is not learner performance."},null,2);
+      }else if(r.data.type==="validate_questions"){
+        const questions=r.data.questionIds.map((id:string)=>item(s,"question",id)),seen=new Set<string>();
+        content=JSON.stringify({checks:questions.map((q:Item)=>{const prompt=String(q.data.prompt??""),fp=fingerprint(prompt.trim().toLowerCase()),issues=[];if(!prompt.trim())issues.push("missing_prompt");if(!q.data.criteria)issues.push("missing_criteria");if(seen.has(fp))issues.push("duplicate_prompt");seen.add(fp);if(String(q.data.answer??"").length>3&&prompt.toLowerCase().includes(String(q.data.answer).toLowerCase()))issues.push("possible_answer_leak");return {id:q.id,version:q.version,issues,semanticCorrectness:"requires tutor inspection",sourceAlignment:q.data.sourceIds?.length?"declared references; content alignment requires inspection":"undeclared"};}),validated:false,limits:"Structural checks only. No automatic semantic validation, item invalidation, or learner failure."},null,2);
+      }else content=r.data.type==="review_plan"?sources.map((v:Item)=>`- Retrieve one governing relation from ${v.data.title}; then test a contrasting case.`).join("\n") : sources.map((v:Item)=>String(v.data.extractedText??v.data.content??"").split("\n").filter(x=>x.trim()).slice(0,12).map((x,i)=>r.data.type==="practice_pack"?`### ${i+1}. Explain, apply, or challenge this source statement\n${x}\n\nCriteria: cite the source, state conditions, and supply a meaningful example.\nValidation: requires tutor review; not a verified answer key.`:x).join("\n\n")).join("\n\n");
       const output=put(s,"artifact",r.data.outputId,{title:r.data.purpose,content,type:r.data.type,sourceIds:r.data.sourceIds,origin:"background_preparation",validated:false,limitations:"Deterministic source extraction; no invented answers, mastery, or unsolicited tutor turn.",private:true},now,actor);
       result={record:put(s,"job",r.id,{...r.data,status:"completed",completedAt:now},now,actor,r.version),output};break;
+    }
+    case "fail_job": {
+      if(actor!=="worker")throw new Fault("worker_only","Only the worker may report a job failure.",403);
+      const r=item(s,"job",c.id!);checkVersion(r,c.version);
+      if(r.data.status!=="queued")throw new Fault("job_changed","The job is no longer queued.",409);
+      result={record:put(s,"job",r.id,{...r.data,status:c.code==="job_revoked"?"canceled":"failed",reason:c.reason,failureCode:c.code,finishedAt:now},now,actor,r.version)};break;
     }
     case "request_delete": case "request_share": {
       const r=item(s,c.kind!,c.id!);result={record:put(s,"share",`request-${fingerprint(c.key)}`,{title:`${c.action==="request_delete"?"Delete":"Share"} ${r.data.title??r.id}`,type:c.action,targetKind:r.kind,targetId:r.id,targetVersion:r.version,status:"awaiting_learner_confirmation",scope:c.data??{},purpose:c.reason??"Learner request"},now,actor),requiresLearner:true};break;
@@ -394,7 +430,7 @@ export function execute(s: State, c: Command, actor = "tutor", now = new Date().
   s.receipts[c.key]={digest,result};
   // Bounded retry receipts. Attempt identity remains durable beyond the receipt window.
   const receiptKeys=Object.keys(s.receipts);if(receiptKeys.length>250)delete s.receipts[receiptKeys[0]];
-  if(JSON.stringify(s).length>2_000_000)throw new Fault("storage_limit","Account aggregate exceeds 2 MB. Export and remove unneeded content before adding more.",413);
+  if(jsonBytes(s)>2_000_000)throw new Fault("storage_limit","Account aggregate exceeds 2 MB. Export and remove unneeded content before adding more.",413);
   return result;
 }
 export const isRead = (action:string) => readActions.includes(action);

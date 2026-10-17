@@ -25,7 +25,7 @@ export async function learningFetch(request:Request, env:Cloudflare.Env,ctx:Exec
   const repo=new D1Repository(env.DB);
   let rpcId:string|number|null=null;
   try{
-    const text=await request.text();if(text.length>500_000)throw new Fault("too_large","Split large inputs into sections.",413);
+    const text=await request.text();if(new TextEncoder().encode(text).byteLength>500_000)throw new Fault("too_large","Split large inputs into sections.",413);
     const body=JSON.parse(text);
     rpcId=body.id??null;
     if(path==="/mcp"&&body.method==="tools/call"&&body.params?.name==="learning_authorize")return json({jsonrpc:"2.0",id:rpcId,result:await authorizeFromHost(repo,owner,body.params)});

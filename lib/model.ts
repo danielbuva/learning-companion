@@ -17,6 +17,7 @@ export class Fault extends Error {
 }
 export const emptyState = (): State => ({ schema: 1, records: Object.fromEntries(kinds.map(k => [k, {}])), history: [], receipts: {}, tombstones: [], exposures: {}, access: { read: true, write: false, background: false, recording: true, excluded: [] } });
 export const all = (s: State, kind: string): Item[] => Object.values(s.records[kind] ?? {});
+export const jsonBytes=(value:unknown)=>new TextEncoder().encode(JSON.stringify(value)).byteLength;
 export function item(s: State, kind: string, id: string): Item {
   const r = s.records[kind]?.[id];
   if (!r) throw new Fault("not_found", `${kind} ${id} is unavailable or deleted.`, 404);
@@ -33,7 +34,7 @@ export function fingerprint(value: unknown): string {
 }
 export const dimensions = ["retrieve", "explain", "apply", "discriminate", "transfer", "generate", "independence"];
 export function evidence(s: State, skillId: string) {
-  const attempts = all(s, "attempt").filter(a => a.data.skillIds?.includes(skillId) && !a.data.invalidated && a.data.actor === "learner" && a.data.assessment?.outcome !== "defective");
+  const attempts = all(s, "attempt").filter(a => a.data.skillIds?.includes(skillId) && !a.data.invalidated && a.data.actor === "learner" && !["defective","no_attempt"].includes(a.data.assessment?.outcome));
   const dims: Json = Object.fromEntries(dimensions.map(d => [d, "?"]));
   const independent = attempts.filter(a => a.data.support === 0 && !a.data.exposed && a.data.origin !== "self_reported" && a.data.origin !== "imported" && a.data.assessment?.outcome === "correct");
   for (const d of dimensions) {
@@ -65,6 +66,8 @@ export function publicActivity(r: Item): Item {
   const copy = structuredClone(r);
   delete copy.data.answer; delete copy.data.solution; delete copy.data.hints;
   delete copy.data.privateTests; delete copy.data.answerKey;
+  if(copy.data.initialState)for(const key of ["answer","solution","hints","answerKey","privateTests"])delete copy.data.initialState[key];
+  for(const state of [copy.data.state,copy.data.initialState?.state])if(state)for(const key of ["expected","answer","solution","answerKey","privateTests"])delete state[key];
   if(copy.data.validator)copy.data.validator={type:copy.data.validator.type};
   return copy;
 }

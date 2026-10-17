@@ -29,7 +29,7 @@ export async function mcpResult(body:Json,run:ToolRunner,html:string):Promise<Js
     case "resources/list":result={resources:[{uri:UI_URI,name:"Learning workspace",mimeType:"text/html;profile=mcp-app"}],ttlMs:0,cacheScope:"public"};break;
     case "resources/read": {
       const uri=String(body.params?.uri??"");
-      if(uri===UI_URI)result={contents:[{uri:UI_URI,mimeType:"text/html;profile=mcp-app",text:html,_meta:{ui:{prefersBorder:true,csp:{connectDomains:[],resourceDomains:["blob:"],frameDomains:["blob:"]},permissions:{microphone:{}}},"openai/ui":{availableDisplayModes:["inline","fullscreen"],preferredDisplayMode:"inline"}}}]};
+      if(uri===UI_URI)result={contents:[{uri:UI_URI,mimeType:"text/html;profile=mcp-app",text:html,_meta:{ui:{prefersBorder:true,csp:{connectDomains:[],resourceDomains:["blob:"]},permissions:{microphone:{}}},"openai/ui":{availableDisplayModes:["inline","fullscreen"],preferredDisplayMode:"inline"}}}]};
       else if(uri.startsWith("learning://record/")){const [kind,id]=uri.slice("learning://record/".length).split("/");const r=await run({action:"get",kind:kind as any,id});result={contents:[{uri,mimeType:"application/json",text:JSON.stringify(r.record)}]};}
       else throw new Error("Resource not found");break;
     }

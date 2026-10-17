@@ -46,6 +46,6 @@ export async function runJobs(repo:Repository,owner:string){
     if(Date.now()-started>25_000)break;
     if(job.data.status!=="queued")continue;
     try{await transact(repo,owner,{action:"finish_job",id:job.id,version:job.version,key:`worker-${job.id}-${job.data.generation}`},"worker");}
-    catch(error){if(!(error instanceof Fault))throw error; /* cancellation and CAS contention preserve the job */}
+    catch(error){if(!(error instanceof Fault))throw error;if(!["conflict","busy","job_changed"].includes(error.code))await transact(repo,owner,{action:"fail_job",id:job.id,version:job.version,key:`worker-failure-${job.id}-${job.data.generation}`,code:error.code,reason:error.message},"worker").catch(()=>{});}
   }
 }

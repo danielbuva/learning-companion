@@ -6,3 +6,5 @@
 .embedded .app-main{padding-bottom:120px}
 
 .workspace-fields{border:0;padding:0;margin:0;min-width:0}
+
+.pdf-reader canvas{display:block;max-width:100%;height:auto;border:1px solid var(--line);background:white;margin:1rem 0}.pdf-reader input{max-width:6rem}.pdf-span{display:block;text-align:left;border:0;border-left:2px solid transparent;background:transparent;padding:.3rem .6rem;max-width:100%;white-space:pre-wrap}.pdf-span:hover,.pdf-span:focus{border-left-color:var(--ink);background:var(--paper)}
